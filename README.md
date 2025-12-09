@@ -4,7 +4,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 
 ## Demo
 
-https://github.com/user-attachments/assets/973a6cef-331f-46a3-8a62-7de897c9f36d
+https://github.com/user-attachments/assets/36cce009-9066-41b9-bd03-573f93de7de3
 
 ## Features
 
