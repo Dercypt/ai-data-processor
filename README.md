@@ -4,7 +4,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 
 ## Demo
 
-[![Watch the Demo](assets/ai-data-processor-screenshot.png)](assets/ai-data-processor-demo.mov)
+https://github.com/user-attachments/assets/36cce009-9066-41b9-bd03-573f93de7de3
 
 ## Features
 
