@@ -76,6 +76,7 @@ ai-data-processor/
 │   ├── analyzer.py     # Pandas data processing logic
 │   └── llm_service.py  # Google Gemini AI integration
 ├── .gitignore          # Protected files (API keys, etc.)
+├── LICENSE             
 ├── requirements.txt    # Project dependencies
 └── README.md           # Documentation
 ```
