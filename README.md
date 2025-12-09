@@ -2,8 +2,9 @@
 
 A smart data analysis tool that automatically cleans CSV datasets, generates statistical summaries, and uses **Google Gemini 2.0 Flash** to provide actionable business insights.
 
-![Project Screenshot](assets/demo_screenshot.png) 
-*(Note: Add a screenshot of your app to the assets folder)*
+## Demo
+
+https://github.com/user-attachments/assets/973a6cef-331f-46a3-8a62-7de897c9f36d
 
 ## Features
 
@@ -82,3 +83,5 @@ ai-data-processor/
 ## Contributing 
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
+## License
