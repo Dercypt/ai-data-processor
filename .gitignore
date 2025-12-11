@@ -1,8 +1,19 @@
+# Python & System artifacts
 __pycache__/
 *.pyc
-.env
-venv/
-.DS_Storecheck_version.py
-list_models.py
 .DS_Store
+venv/
+
+# Secrets & Environment
+.env
+
+# Local Data
+*.db
+history.db
+
+# Logs
+nohup.out
+
+# Utility Scripts
+list_models.py
 check_version.py
