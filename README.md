@@ -4,7 +4,8 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 
 ## Demo
 <img width="1435" height="810" alt="Screenshot 2025-12-11 at 9 19 21 AM" src="https://github.com/user-attachments/assets/961b0bd7-b75c-439e-a94c-2d8d6ebaa088" />
-[Video link to demo](https://www.youtube.com/watch?v=8lcyLOtpbrk)
+
+[Video demo](https://www.youtube.com/watch?v=8lcyLOtpbrk)
 
 ## Features
 
@@ -20,6 +21,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 * **Streamlit** (Frontend)
 * **Pandas** (Data Processing)
 * **Google Gemini API** (LLM Engine)
+* **SQLite** (Local Database)
 
 ## Installation & Setup
 
