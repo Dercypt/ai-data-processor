@@ -2,10 +2,10 @@
 
 A smart data analysis tool that automatically cleans CSV datasets, generates statistical summaries, and uses **Google Gemini 2.0 Flash** to provide actionable business insights.
 
-## Demo
-<img width="1435" height="810" alt="Screenshot 2025-12-11 at 9 19 21 AM" src="https://github.com/user-attachments/assets/961b0bd7-b75c-439e-a94c-2d8d6ebaa088" />
+## Live Demo
+**[Try the App Here](https://zyndrex-data-analyzer.streamlit.app)**
 
-[Video demo](https://www.youtube.com/watch?v=8lcyLOtpbrk)
+<img width="1435" height="810" alt="Screenshot 2025-12-11 at 9 19 21 AM" src="https://github.com/user-attachments/assets/961b0bd7-b75c-439e-a94c-2d8d6ebaa088" />
 
 ## Features
 
@@ -21,8 +21,8 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 * **Streamlit** (Frontend)
 * **Pandas** (Data Processing)
 * **Google Gemini API** (LLM Engine)
-* **SQLite** (Local Database)
-
+* **Google Sheets API** (Cloud Database)
+  
 ## Installation & Setup
 
 Follow these steps to run the project locally.
@@ -49,24 +49,26 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Set Up API Keys
-This project uses Google's Gemini API (Free Tier).
-  1. Get your free API key here: [Google AI Studio](https://aistudio.google.com/api-keys).
-  2. Create a `.env` file in the root directory:
+### 4. Set Up Secrets
+This project uses **Google Sheets** for the database and **Gemini** for AI.
+  1. Create a folder named `.streamlit` in the root directory.
+  2. Inside it, create a file named `secrets.toml`.
+  3. Add your credentials in this format:
      ```bash
-     touch .env  # Mac/Linux
-     # Or manually create a file named .env
+     GOOGLE_API_KEY = "Your-Gemini-Key-Here"
+
+     [connections.gsheets]
+     spreadsheet = "Your-Google-Sheet-URL"
+     type = "service_account"
+     project_id = "..."
+     # ... (Add full Google Service Account JSON details here)
      ```
-  3. Add your key to the file:
-     ```bash
-     GOOGLE_API_KEY=AIzaSyYourKeyHere...
-     ```
+
+     *(Note: If you just want to test the UI without the database, you can skip the GSheets section, but the history feature will be disabled.)*
      
 ### 5. Run the Application
 ```bash
 python -m streamlit run src/main.py
-# OR
-streamlit run src/main.py
 ```
 
 ## Project Structure
@@ -77,7 +79,7 @@ ai-data-processor/
 ├── src/
 │   ├── main.py         # Streamlit UI Entry point
 │   ├── analyzer.py     # Pandas data processing logic
-│   ├── database.py     # SQLite database management
+│   ├── database.py     # Google Sheets connection manager
 │   └── llm_service.py  # Google Gemini AI integration
 ├── .gitignore          # Protected files (API keys, etc.)
 ├── LICENSE             
