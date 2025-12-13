@@ -3,14 +3,16 @@
 A smart data analysis tool that automatically cleans CSV datasets, generates statistical summaries, and uses **Google Gemini 2.0 Flash** to provide actionable business insights.
 
 ## Demo
+<img width="1435" height="810" alt="Screenshot 2025-12-11 at 9 19 21 AM" src="https://github.com/user-attachments/assets/961b0bd7-b75c-439e-a94c-2d8d6ebaa088" />
 
-https://github.com/user-attachments/assets/36cce009-9066-41b9-bd03-573f93de7de3
+[Video demo](https://www.youtube.com/watch?v=8lcyLOtpbrk)
 
 ## Features
 
 * **Automated Cleaning:** Instantly fills missing values and standardizes numerical data.
 * **Statistical Analysis:** Generates descriptive statistics (mean, median, std dev) automatically.
 * **AI Analyst Agent:** Uses the **Gemini Flash** model to interpret data trends and provide 3 key business insights.
+* **History Tracking:** Automatically saves analysis results to a local SQLite database for future reference.
 * **Privacy Focused:** Your data is processed locally; only the statistical summary is sent to the LLM.
 
 ## Tech Stack
@@ -19,6 +21,7 @@ https://github.com/user-attachments/assets/36cce009-9066-41b9-bd03-573f93de7de3
 * **Streamlit** (Frontend)
 * **Pandas** (Data Processing)
 * **Google Gemini API** (LLM Engine)
+* **SQLite** (Local Database)
 
 ## Installation & Setup
 
@@ -74,6 +77,7 @@ ai-data-processor/
 ├── src/
 │   ├── main.py         # Streamlit UI Entry point
 │   ├── analyzer.py     # Pandas data processing logic
+│   ├── database.py     # SQLite database management
 │   └── llm_service.py  # Google Gemini AI integration
 ├── .gitignore          # Protected files (API keys, etc.)
 ├── LICENSE             
