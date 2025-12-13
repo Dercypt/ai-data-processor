@@ -23,7 +23,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 * **Google Gemini API** (LLM Engine)
 * **Google Sheets API** (Cloud Database)
   
-## Installation & Setup
+## Run Locally (For Developers)
 
 Follow these steps to run the project locally.
 
