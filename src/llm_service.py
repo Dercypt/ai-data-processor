@@ -16,7 +16,7 @@ def get_ai_insights(summary):
     if not api_key:
         return "Error: Google API Key missing. Check .streamlit/secrets.toml"
 
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-flash-latest')
     
     prompt = f"""
     You are a Senior Data Analyst. 
