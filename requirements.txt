@@ -2,3 +2,4 @@ pandas
 streamlit
 google-generativeai
 python-dotenv
+st-gsheets-connection

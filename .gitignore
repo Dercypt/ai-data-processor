@@ -6,6 +6,7 @@ venv/
 
 # Secrets & Environment
 .env
+.streamlit/secrets.toml
 
 # Local Data
 *.db
