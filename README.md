@@ -1,6 +1,6 @@
 # AI Data Processor
 
-A smart data analysis tool that automatically cleans CSV datasets, generates statistical summaries, and uses **Google Gemini 2.0 Flash** to provide actionable business insights.
+A smart data analysis tool that automatically cleans CSV datasets, generates statistical summaries, and uses **Google Gemini 2.5 Flash** to provide actionable business insights.
 
 ## Live Demo
 **[Try the App Here](https://zyndrex-data-analyzer.streamlit.app)**
