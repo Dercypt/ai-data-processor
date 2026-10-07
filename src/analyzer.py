@@ -167,6 +167,120 @@ def detect_outliers_isolation_forest(
     }
 
 
+def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
+    """
+    Auto-detect semantic column types across tabular dataset:
+    - 'continuous': numeric features (int, float)
+    - 'categorical': low-cardinality nominal/ordinal features, booleans
+    - 'datetime': timestamp and date features
+    - 'text': free-form high-cardinality unstructured strings
+    """
+    column_types: Dict[str, str] = {}
+    total_rows = len(df)
+
+    for col in df.columns:
+        col_str = str(col)
+        series = df[col]
+        valid_series = series.dropna()
+
+        if valid_series.empty:
+            if pd.api.types.is_numeric_dtype(series):
+                column_types[col_str] = "continuous"
+            else:
+                column_types[col_str] = "text"
+            continue
+
+        # 1. Check if explicitly datetime or boolean / categorical dtype
+        if pd.api.types.is_datetime64_any_dtype(series):
+            column_types[col_str] = "datetime"
+            continue
+
+        if pd.api.types.is_bool_dtype(series) or isinstance(series.dtype, pd.CategoricalDtype):
+            column_types[col_str] = "categorical"
+            continue
+
+        # 2. Check if numeric dtype
+        if pd.api.types.is_numeric_dtype(series):
+            n_unique = int(valid_series.nunique())
+            # Binary flag (0 and 1) is typically categorical
+            if n_unique <= 2 and set(valid_series.unique()).issubset({0, 1, 0.0, 1.0}):
+                column_types[col_str] = "categorical"
+            else:
+                column_types[col_str] = "continuous"
+            continue
+
+        # 3. For object / string series, check if it can be parsed as datetime
+        sample = valid_series.head(100).astype(str)
+        date_delimiters = {"-", "/", ":", "T"}
+        has_date_symbols = bool(
+            sample.apply(lambda s: any(delim in s for delim in date_delimiters)).mean() >= 0.8
+        )
+        if has_date_symbols:
+            try:
+                parsed_dates = pd.to_datetime(sample, errors="coerce")
+                if float(parsed_dates.notna().mean()) >= 0.8:
+                    column_types[col_str] = "datetime"
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # 4. Check if object series contains numeric strings
+        try:
+            numeric_parsed = pd.to_numeric(sample, errors="coerce")
+            if float(numeric_parsed.notna().mean()) >= 0.9:
+                n_unique = int(valid_series.nunique())
+                if n_unique <= 2:
+                    column_types[col_str] = "categorical"
+                else:
+                    column_types[col_str] = "continuous"
+                continue
+        except (ValueError, TypeError):
+            pass
+
+        # 5. Distinguish between 'categorical' and 'text'
+        n_unique = int(valid_series.nunique())
+        cardinality_ratio = (n_unique / total_rows) if total_rows > 0 else 0.0
+        sample_words = sample.apply(lambda s: len(s.split()))
+        avg_words = float(sample_words.mean())
+        max_words = int(sample_words.max())
+        avg_char_len = float(sample.apply(len).mean())
+
+        if avg_words > 3.0 or max_words > 10 or avg_char_len > 60.0 or (n_unique > 50 and cardinality_ratio > 0.5):
+            column_types[col_str] = "text"
+        else:
+            column_types[col_str] = "categorical"
+
+    return column_types
+
+
+def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
+    """Generate statistical summary and column type classifications for a DataFrame."""
+    col_types = detect_column_types(df)
+    corr = compute_correlations(df)
+    skew_vals, kurt_vals, skew_desc, kurt_desc = compute_skewness_and_kurtosis(df)
+    iqr_outliers = detect_outliers_iqr(df)
+    zscore_outliers = detect_outliers_zscore(df)
+    iso_outliers = detect_outliers_isolation_forest(df)
+
+    summary: Dict[str, object] = {
+        "columns": list(df.columns),
+        "rows": int(len(df)),
+        "stats": df.describe().to_dict(),
+        "column_types": col_types,
+        "correlation": corr,
+        "skewness": skew_vals,
+        "kurtosis": kurt_vals,
+        "skewness_interpretation": skew_desc,
+        "kurtosis_interpretation": kurt_desc,
+        "outliers": {
+            "iqr": iqr_outliers,
+            "zscore": zscore_outliers,
+            "isolation_forest": iso_outliers,
+        },
+    }
+    return summary
+
+
 def analyze_dataset(
     file: object,
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
@@ -179,6 +293,9 @@ def analyze_dataset(
         if df.empty:
             return None, None, "The uploaded CSV file is empty."
 
+        # Detect column types prior to default imputation
+        col_types = detect_column_types(df)
+
         # Eliminate missing values without dropping rows or columns (Law 2)
         for col in df.columns:
             if pd.api.types.is_numeric_dtype(df[col]):
@@ -186,27 +303,8 @@ def analyze_dataset(
             else:
                 df[col] = df[col].fillna("Unknown")
 
-        corr = compute_correlations(df)
-        skew_vals, kurt_vals, skew_desc, kurt_desc = compute_skewness_and_kurtosis(df)
-        iqr_outliers = detect_outliers_iqr(df)
-        zscore_outliers = detect_outliers_zscore(df)
-        iso_outliers = detect_outliers_isolation_forest(df)
-
-        summary: Dict[str, object] = {
-            "columns": list(df.columns),
-            "rows": int(len(df)),
-            "stats": df.describe().to_dict(),
-            "correlation": corr,
-            "skewness": skew_vals,
-            "kurtosis": kurt_vals,
-            "skewness_interpretation": skew_desc,
-            "kurtosis_interpretation": kurt_desc,
-            "outliers": {
-                "iqr": iqr_outliers,
-                "zscore": zscore_outliers,
-                "isolation_forest": iso_outliers,
-            },
-        }
+        summary = generate_summary(df)
+        summary["column_types"] = col_types
         return df, summary, None
     except Exception as e:
         return None, None, str(e)

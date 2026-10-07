@@ -11,9 +11,11 @@ from analyzer import (
     analyze_dataset,
     compute_correlations,
     compute_skewness_and_kurtosis,
+    detect_column_types,
     detect_outliers_iqr,
     detect_outliers_zscore,
     detect_outliers_isolation_forest,
+    generate_summary,
     interpret_skewness,
     interpret_kurtosis,
 )
@@ -127,6 +129,70 @@ class TestAnalyzer(unittest.TestCase):
         self.assertIsNone(df)
         self.assertIsNone(summary)
         self.assertIsNotNone(err)
+
+    def test_detect_column_types_all_modalities(self):
+        test_df = pd.DataFrame({
+            "continuous_int": [10, 20, 30, 40, 50],
+            "continuous_float": [1.5, 2.7, 3.8, 4.2, 5.9],
+            "categorical_str": ["Low", "Medium", "High", "Low", "Medium"],
+            "categorical_bool": [True, False, True, True, False],
+            "categorical_binary_num": [0, 1, 1, 0, 1],
+            "datetime_str": ["2023-01-01", "2023-02-01", "2023-03-01", "2023-04-01", "2023-05-01"],
+            "datetime_parsed": pd.to_datetime(["2023-01-01", "2023-02-01", "2023-03-01", "2023-04-01", "2023-05-01"]),
+            "text_sentences": [
+                "This is a long review of an excellent product.",
+                "Customer service was somewhat slow and unhelpful today.",
+                "Fast shipping and great packaging overall.",
+                "Would definitely recommend this to friends and family.",
+                "Decent quality for the price point offered.",
+            ],
+        })
+        types = detect_column_types(test_df)
+        self.assertEqual(types["continuous_int"], "continuous")
+        self.assertEqual(types["continuous_float"], "continuous")
+        self.assertEqual(types["categorical_str"], "categorical")
+        self.assertEqual(types["categorical_bool"], "categorical")
+        self.assertEqual(types["categorical_binary_num"], "categorical")
+        self.assertEqual(types["datetime_str"], "datetime")
+        self.assertEqual(types["datetime_parsed"], "datetime")
+        self.assertEqual(types["text_sentences"], "text")
+
+    def test_detect_column_types_empty_and_na(self):
+        empty_df = pd.DataFrame({
+            "empty_num": pd.Series([], dtype=float),
+            "empty_str": pd.Series([], dtype=object),
+        })
+        types = detect_column_types(empty_df)
+        self.assertEqual(types["empty_num"], "continuous")
+        self.assertEqual(types["empty_str"], "text")
+
+        all_na_df = pd.DataFrame({
+            "all_na_num": pd.Series([np.nan, np.nan], dtype=float),
+            "all_na_str": pd.Series([None, np.nan], dtype=object),
+        })
+        na_types = detect_column_types(all_na_df)
+        self.assertEqual(na_types["all_na_num"], "continuous")
+        self.assertEqual(na_types["all_na_str"], "text")
+
+
+    def test_generate_summary_contains_column_types(self):
+        df_sample = pd.DataFrame({
+            "num": [1.0, 2.0, 3.0],
+            "cat": ["A", "B", "C"],
+        })
+        summary = generate_summary(df_sample)
+        self.assertIn("column_types", summary)
+        self.assertEqual(summary["column_types"]["num"], "continuous")
+        self.assertEqual(summary["column_types"]["cat"], "categorical")
+
+    def test_analyze_dataset_summary_includes_column_types(self):
+        df_clean, summary, err = analyze_dataset(self.csv_file)
+        self.assertIsNone(err)
+        self.assertIsNotNone(summary)
+        self.assertIn("column_types", summary)
+        self.assertIn("feature_a", summary["column_types"])
+        self.assertEqual(summary["column_types"]["feature_a"], "continuous")
+        self.assertEqual(summary["column_types"]["category"], "categorical")
 
 
 if __name__ == "__main__":

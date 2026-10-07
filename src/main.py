@@ -3,9 +3,13 @@ import time
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from analyzer import analyze_dataset
+from analyzer import (
+    analyze_dataset,
+    detect_column_types,
+    generate_summary,
+)
 from llm_service import get_ai_insights
 from database import init_db, save_entry, get_all_entries, delete_entry
 
@@ -258,6 +262,34 @@ def render_outlier_inspector(
             st.plotly_chart(fig, use_container_width=True)
 
 
+def render_column_types_overview(
+    raw_df: pd.DataFrame,
+    detected_types: Dict[str, str],
+) -> None:
+    """Render interactive Smart Preprocessing Pipeline column type auto-detection overview."""
+    with st.expander("🛠️ Smart / Automated Preprocessing Pipeline", expanded=True):
+        st.write("#### 🔍 Auto-Detected Column Types")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Continuous (🔢)", sum(1 for t in detected_types.values() if t == "continuous"))
+        c2.metric("Categorical (🏷️)", sum(1 for t in detected_types.values() if t == "categorical"))
+        c3.metric("Datetime (📅)", sum(1 for t in detected_types.values() if t == "datetime"))
+        c4.metric("Text (📝)", sum(1 for t in detected_types.values() if t == "text"))
+
+        total_rows = len(raw_df)
+        type_rows = []
+        for col in raw_df.columns:
+            missing_cnt = int(raw_df[col].isnull().sum())
+            missing_pct = round((missing_cnt / total_rows) * 100.0, 2) if total_rows > 0 else 0.0
+            type_rows.append({
+                "Feature": col,
+                "Detected Type": detected_types.get(str(col), "unknown"),
+                "Missing Values": missing_cnt,
+                "Missing %": f"{missing_pct}%",
+            })
+        st.dataframe(pd.DataFrame(type_rows), use_container_width=True)
+
+
 # --- MAIN APP: UPLOAD & ANALYZE ---
 
 file = st.file_uploader("Upload CSV", type="csv")
@@ -268,6 +300,9 @@ if file:
     if err or df is None or summary is None:
         st.error(err or "Failed to analyze dataset.")
     else:
+        col_types = summary.get("column_types", {})
+        if isinstance(col_types, dict):
+            render_column_types_overview(df, col_types)  # type: ignore[arg-type]
         st.write("### Data Preview", df.head())
 
         # UI Layout: Interactive Data Science & Statistics on left, AI Controls on right
