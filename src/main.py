@@ -9,6 +9,7 @@ from analyzer import (
     analyze_dataset,
     detect_column_types,
     generate_summary,
+    impute_missing_values,
 )
 from llm_service import get_ai_insights
 from database import init_db, save_entry, get_all_entries, delete_entry
@@ -262,11 +263,15 @@ def render_outlier_inspector(
             st.plotly_chart(fig, use_container_width=True)
 
 
-def render_column_types_overview(
+def render_preprocessing_pipeline(
     raw_df: pd.DataFrame,
     detected_types: Dict[str, str],
-) -> None:
-    """Render interactive Smart Preprocessing Pipeline column type auto-detection overview."""
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    """
+    Render interactive Smart Preprocessing Pipeline controls:
+    - Auto-detected column types (continuous, categorical, datetime, text)
+    - User-configurable imputation (Mean, Median, Mode, Drop)
+    """
     with st.expander("🛠️ Smart / Automated Preprocessing Pipeline", expanded=True):
         st.write("#### 🔍 Auto-Detected Column Types")
 
@@ -289,20 +294,93 @@ def render_column_types_overview(
             })
         st.dataframe(pd.DataFrame(type_rows), use_container_width=True)
 
+        missing_cols = [c for c in raw_df.columns if raw_df[c].isnull().any()]
+        if not missing_cols:
+            st.success("✅ Dataset has no missing values. No imputation required.")
+            summary = generate_summary(raw_df)
+            summary["column_types"] = detected_types
+            return raw_df, summary
+
+        st.markdown("#### ⚙️ User-Configurable Imputation")
+        st.caption("Customize missing value imputation strategies across detected column types (Mean, Median, Mode, Drop).")
+
+        mode = st.radio(
+            "Strategy Mode:",
+            options=["Global Strategy", "Per-Column Strategy"],
+            horizontal=True,
+            key="imputation_mode_radio",
+        )
+
+        processed_df = raw_df
+        if mode == "Global Strategy":
+            global_opt = st.selectbox(
+                "Select Global Strategy (Mean, Median, Mode, Drop):",
+                options=["Mean", "Median", "Mode", "Drop"],
+                key="global_imputation_select",
+            )
+            try:
+                processed_df = impute_missing_values(raw_df, strategy=global_opt.lower())
+                st.info(f"Applied **{global_opt}** imputation globally across missing features.")
+            except Exception as e:
+                st.error(f"Imputation failed: {e}")
+                processed_df = raw_df
+        else:
+            col_strategy_map: Dict[str, str] = {}
+            st.write("Configure imputation per missing column:")
+            cols_ui = st.columns(min(len(missing_cols), 3))
+            for idx, col_name in enumerate(missing_cols):
+                col_type = detected_types.get(col_name, "continuous")
+                with cols_ui[idx % len(cols_ui)]:
+                    if col_type == "continuous":
+                        options = ["Mean", "Median", "Mode", "Drop"]
+                    else:
+                        options = ["Mode", "Drop"]
+                    selected_strategy = st.selectbox(
+                        f"`{col_name}` ({col_type}):",
+                        options=options,
+                        key=f"col_impute_{col_name}",
+                    )
+                    col_strategy_map[col_name] = selected_strategy.lower()
+
+            try:
+                processed_df = impute_missing_values(raw_df, strategy=col_strategy_map)
+                st.info("Applied per-column imputation configuration.")
+            except Exception as e:
+                st.error(f"Imputation failed: {e}")
+                processed_df = raw_df
+
+        # Provide summary metrics after imputation
+        initial_len = len(raw_df)
+        final_len = len(processed_df)
+        if final_len < initial_len:
+            st.warning(f"⚠️ Row count reduced from {initial_len} to {final_len} due to row drop.")
+        else:
+            st.success(f"Row count preserved ({final_len} rows). All missing values resolved.")
+
+        summary = generate_summary(processed_df)
+        summary["column_types"] = detected_types
+        return processed_df, summary
+
 
 # --- MAIN APP: UPLOAD & ANALYZE ---
 
 file = st.file_uploader("Upload CSV", type="csv")
 
 if file:
-    df, summary, err = analyze_dataset(file)
+    df: Optional[pd.DataFrame] = None
+    summary: Optional[Dict[str, object]] = None
 
-    if err or df is None or summary is None:
-        st.error(err or "Failed to analyze dataset.")
-    else:
-        col_types = summary.get("column_types", {})
-        if isinstance(col_types, dict):
-            render_column_types_overview(df, col_types)  # type: ignore[arg-type]
+    try:
+        raw_df = pd.read_csv(file)
+        if raw_df.empty:
+            st.error("The uploaded CSV file is empty.")
+        else:
+            detected_types = detect_column_types(raw_df)
+            df, summary = render_preprocessing_pipeline(raw_df, detected_types)
+    except Exception as e:
+        st.error(f"Failed to process CSV: {e}")
+
+    if df is not None and summary is not None:
         st.write("### Data Preview", df.head())
 
         # UI Layout: Interactive Data Science & Statistics on left, AI Controls on right

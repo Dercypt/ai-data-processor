@@ -16,6 +16,7 @@ from analyzer import (
     detect_outliers_zscore,
     detect_outliers_isolation_forest,
     generate_summary,
+    impute_missing_values,
     interpret_skewness,
     interpret_kurtosis,
 )
@@ -174,6 +175,104 @@ class TestAnalyzer(unittest.TestCase):
         self.assertEqual(na_types["all_na_num"], "continuous")
         self.assertEqual(na_types["all_na_str"], "text")
 
+    def test_impute_missing_values_global_mean(self):
+        df_missing = pd.DataFrame({
+            "num_a": [10.0, 20.0, np.nan, 30.0],
+            "cat_b": ["apple", "banana", "apple", np.nan],
+        })
+        imputed = impute_missing_values(df_missing, strategy="mean")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        self.assertAlmostEqual(imputed.loc[2, "num_a"], 20.0)
+        self.assertEqual(imputed.loc[3, "cat_b"], "apple")
+
+    def test_impute_missing_values_global_median(self):
+        df_missing = pd.DataFrame({
+            "num_a": [10.0, 20.0, 100.0, np.nan],
+            "cat_b": ["red", "blue", "red", np.nan],
+        })
+        # median of [10, 20, 100] is 20.0
+        imputed = impute_missing_values(df_missing, strategy="median")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        self.assertAlmostEqual(imputed.loc[3, "num_a"], 20.0)
+        self.assertEqual(imputed.loc[3, "cat_b"], "red")
+
+    def test_impute_missing_values_global_mode(self):
+        df_missing = pd.DataFrame({
+            "num_a": [5.0, 5.0, 10.0, np.nan],
+            "cat_b": ["dog", "cat", "dog", np.nan],
+        })
+        imputed = impute_missing_values(df_missing, strategy="mode")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        self.assertEqual(imputed.loc[3, "num_a"], 5.0)
+        self.assertEqual(imputed.loc[3, "cat_b"], "dog")
+
+    def test_impute_missing_values_global_drop(self):
+        df_missing = pd.DataFrame({
+            "num_a": [1.0, 2.0, np.nan, 4.0],
+            "cat_b": ["a", "b", "c", np.nan],
+        })
+        imputed = impute_missing_values(df_missing, strategy="drop")
+        self.assertEqual(len(imputed), 2)
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        self.assertEqual(list(imputed["num_a"]), [1.0, 2.0])
+
+    def test_impute_missing_values_per_column_dict(self):
+        df_missing = pd.DataFrame({
+            "mean_col": [10.0, np.nan, 30.0, 40.0],
+            "median_col": [1.0, 2.0, 100.0, np.nan],
+            "mode_col": ["alpha", "beta", "alpha", np.nan],
+            "drop_col": [100, 200, np.nan, 400],
+        })
+        strategy = {
+            "mean_col": "mean",
+            "median_col": "median",
+            "mode_col": "mode",
+            "drop_col": "drop",
+        }
+        imputed = impute_missing_values(df_missing, strategy=strategy)
+        # Row 2 had NaN in drop_col, so it should be dropped
+        # Remaining rows: indices 0, 1, 3 originally -> now 3 rows
+        self.assertEqual(len(imputed), 3)
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+
+    def test_impute_missing_values_unspecified_fallback(self):
+        df_missing = pd.DataFrame({
+            "configured_col": [10.0, np.nan, 30.0],
+            "unconfigured_col": ["x", "y", np.nan],
+        })
+        strategy = {"configured_col": "mean"}
+        imputed = impute_missing_values(df_missing, strategy=strategy, default_unspecified="mode")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+
+    def test_impute_missing_values_domain_errors(self):
+        df_test = pd.DataFrame({
+            "num": [1.0, 2.0, np.nan],
+            "cat": ["a", "b", np.nan],
+        })
+        # Invalid strategy string
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_test, strategy="invalid_strategy")
+
+        # Mean applied to non-numeric column
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_test, strategy={"cat": "mean"})
+
+        # Median applied to non-numeric column
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_test, strategy={"cat": "median"})
+
+        # Column not found in DataFrame
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_test, strategy={"non_existent": "drop"})
+
+        # Invalid strategy type
+        with self.assertRaises(TypeError):
+            impute_missing_values(df_test, strategy=123)  # type: ignore[arg-type]
+
+        # Dropping that results in empty dataset
+        all_na_df = pd.DataFrame({"a": [np.nan, np.nan]})
+        with self.assertRaises(ValueError):
+            impute_missing_values(all_na_df, strategy="drop")
 
     def test_generate_summary_contains_column_types(self):
         df_sample = pd.DataFrame({

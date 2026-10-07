@@ -253,6 +253,151 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
     return column_types
 
 
+def impute_missing_values(
+    df: pd.DataFrame,
+    strategy: Union[str, Dict[str, str]] = "mean",
+    default_unspecified: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Impute or clean missing values according to user-configurable strategies.
+    Supported strategies:
+    - 'mean': Fills missing values with the arithmetic mean (numeric columns only).
+    - 'median': Fills missing values with the median (numeric columns only).
+    - 'mode': Fills missing values with the most frequent value.
+    - 'drop': Drops rows containing missing values in the targeted column(s).
+
+    Parameters:
+        df: Input DataFrame.
+        strategy: Either a global strategy string ('mean', 'median', 'mode', 'drop')
+                  or a column-to-strategy mapping dictionary.
+        default_unspecified: Optional fallback strategy for columns not present in the strategy dictionary.
+
+    Returns:
+        pd.DataFrame with missing values imputed or dropped according to configuration.
+    """
+    if df.empty:
+        return df.copy()
+
+    valid_strategies = {"mean", "median", "mode", "drop"}
+
+    if isinstance(strategy, str):
+        strat_lower = strategy.strip().lower()
+        if strat_lower not in valid_strategies:
+            raise ValueError(
+                f"Invalid imputation strategy '{strategy}'. "
+                f"Supported strategies: 'mean', 'median', 'mode', 'drop'."
+            )
+
+        result_df = df.copy()
+        if strat_lower == "drop":
+            result_df = result_df.dropna().reset_index(drop=True)
+            if result_df.empty and not df.empty:
+                raise ValueError("Dropping missing values resulted in an empty dataset.")
+            return result_df
+
+        for col in result_df.columns:
+            if not result_df[col].isnull().any():
+                continue
+            is_numeric = pd.api.types.is_numeric_dtype(result_df[col])
+            if strat_lower == "mean":
+                if not is_numeric:
+                    mode_vals = result_df[col].mode(dropna=True)
+                    fill_val = mode_vals.iloc[0] if not mode_vals.empty else "Unknown"
+                    result_df[col] = result_df[col].fillna(fill_val)
+                else:
+                    mean_val = result_df[col].mean()
+                    num_fill = float(mean_val) if not pd.isna(mean_val) else 0.0
+                    result_df[col] = result_df[col].fillna(num_fill)
+            elif strat_lower == "median":
+                if not is_numeric:
+                    mode_vals = result_df[col].mode(dropna=True)
+                    fill_val = mode_vals.iloc[0] if not mode_vals.empty else "Unknown"
+                    result_df[col] = result_df[col].fillna(fill_val)
+                else:
+                    med_val = result_df[col].median()
+                    num_fill = float(med_val) if not pd.isna(med_val) else 0.0
+                    result_df[col] = result_df[col].fillna(num_fill)
+            elif strat_lower == "mode":
+                mode_vals = result_df[col].mode(dropna=True)
+                if not mode_vals.empty:
+                    result_df[col] = result_df[col].fillna(mode_vals.iloc[0])
+                else:
+                    fallback_val = 0.0 if is_numeric else "Unknown"
+                    result_df[col] = result_df[col].fillna(fallback_val)
+
+        return result_df
+
+    elif isinstance(strategy, dict):
+        result_df = df.copy()
+        normalized_strat: Dict[str, str] = {}
+        for col_key, strat_val in strategy.items():
+            if col_key not in result_df.columns:
+                raise ValueError(
+                    f"Column '{col_key}' specified in imputation strategy not found in DataFrame columns."
+                )
+            strat_norm = str(strat_val).strip().lower()
+            if strat_norm not in valid_strategies:
+                raise ValueError(
+                    f"Invalid imputation strategy '{strat_val}' for column '{col_key}'. "
+                    f"Supported strategies: 'mean', 'median', 'mode', 'drop'."
+                )
+            if strat_norm in ("mean", "median") and not pd.api.types.is_numeric_dtype(result_df[col_key]):
+                raise ValueError(
+                    f"Cannot apply '{strat_norm}' imputation to non-numeric column '{col_key}'. "
+                    f"Use 'mode' or 'drop' instead."
+                )
+            normalized_strat[col_key] = strat_norm
+
+        if default_unspecified is not None:
+            default_norm = default_unspecified.strip().lower()
+            if default_norm not in valid_strategies:
+                raise ValueError(
+                    f"Invalid default_unspecified strategy '{default_unspecified}'. "
+                    f"Supported strategies: 'mean', 'median', 'mode', 'drop'."
+                )
+            for col in result_df.columns:
+                if col not in normalized_strat:
+                    if default_norm in ("mean", "median") and not pd.api.types.is_numeric_dtype(result_df[col]):
+                        normalized_strat[col] = "mode"
+                    else:
+                        normalized_strat[col] = default_norm
+
+        # Step 1: Drop missing rows for drop-designated columns
+        drop_cols = [c for c, s in normalized_strat.items() if s == "drop" and result_df[c].isnull().any()]
+        if drop_cols:
+            result_df = result_df.dropna(subset=drop_cols).reset_index(drop=True)
+            if result_df.empty and not df.empty:
+                raise ValueError("Dropping missing values resulted in an empty dataset.")
+
+        # Step 2: Apply imputation to remaining configured columns
+        for col, strat_norm in normalized_strat.items():
+            if strat_norm == "drop" or not result_df[col].isnull().any():
+                continue
+            is_numeric = pd.api.types.is_numeric_dtype(result_df[col])
+            if strat_norm == "mean":
+                mean_val = result_df[col].mean()
+                num_fill = float(mean_val) if not pd.isna(mean_val) else 0.0
+                result_df[col] = result_df[col].fillna(num_fill)
+            elif strat_norm == "median":
+                med_val = result_df[col].median()
+                num_fill = float(med_val) if not pd.isna(med_val) else 0.0
+                result_df[col] = result_df[col].fillna(num_fill)
+            elif strat_norm == "mode":
+                mode_vals = result_df[col].mode(dropna=True)
+                if not mode_vals.empty:
+                    result_df[col] = result_df[col].fillna(mode_vals.iloc[0])
+                else:
+                    fallback_val = 0.0 if is_numeric else "Unknown"
+                    result_df[col] = result_df[col].fillna(fallback_val)
+
+        return result_df
+
+    else:
+        raise TypeError(
+            f"Imputation strategy must be a str or Dict[str, str], got {type(strategy).__name__}."
+        )
+
+
 def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
     """Generate statistical summary and column type classifications for a DataFrame."""
     col_types = detect_column_types(df)
