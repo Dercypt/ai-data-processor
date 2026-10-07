@@ -3,3 +3,5 @@ streamlit
 google-generativeai
 python-dotenv
 st-gsheets-connection
+plotly
+scikit-learn
