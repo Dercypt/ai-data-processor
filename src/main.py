@@ -7,10 +7,13 @@ import plotly.graph_objects as go
 from typing import Dict, List, Optional, Tuple, Union
 
 from analyzer import (
+    DEFAULT_CHUNKSIZE,
     analyze_dataset,
     detect_column_types,
+    evaluate_memory_footprint,
     generate_summary,
     impute_missing_values,
+    read_csv_chunked,
 )
 from llm_service import get_ai_insights
 from database import (
@@ -492,7 +495,136 @@ def render_structured_insights(insights: Union[Dict[str, object], str]) -> None:
             st.success(f"• {rec}")
 
 
+def render_memory_evaluation_tab(file_or_data: Optional[object]) -> None:
+    """
+    Render interactive Memory Footprint Evaluation dashboard comparing chunk sizes.
+    Demonstrates space complexity O(N) vs O(C) for CS faculty panels.
+    """
+    st.markdown("#### 🔬 Empirical Memory Footprint Evaluation across Chunk Sizes")
+    st.caption(
+        "Demonstrating asymptotic space complexity differences between monolithic $O(N)$ DataFrame "
+        "loading versus bounded $O(C)$ streaming and chunked ingestion."
+    )
+
+    eval_col1, eval_col2 = st.columns([1, 2])
+    with eval_col1:
+        st.write("##### ⚙️ Benchmark Parameters")
+        selected_sizes = st.multiselect(
+            "Chunk Sizes to Compare (C):",
+            options=[500, 1000, 2500, 5000, 10000, 25000],
+            default=[500, 1000, 5000, 10000],
+            key="benchmark_chunk_sizes",
+        )
+        run_btn = st.button("🚀 Run Empirical Benchmark", key="btn_run_mem_bench", use_container_width=True)
+
+    with eval_col2:
+        st.info(
+            "💡 **Computer Science Asymptotic Complexity Note:**\n\n"
+            "- **Monolithic `pd.read_csv`:** Space $\\Theta(N \\cdot M)$ auxiliary memory where $N$ is row count.\n"
+            "- **Chunked Streaming (`chunksize=C`):** Working set strictly bounded to $\\Theta(C \\cdot M)$, "
+            "reducing peak heap pressure and garbage collector pauses."
+        )
+
+    if run_btn:
+        with st.spinner("Profiling heap allocations using tracemalloc..."):
+            sizes_to_test = sorted(selected_sizes) if selected_sizes else [500, 1000, 5000, 10000]
+            bench_results = evaluate_memory_footprint(file_or_data, chunk_sizes=sizes_to_test)
+            st.session_state["benchmark_results"] = bench_results
+
+    if "benchmark_results" in st.session_state and st.session_state["benchmark_results"]:
+        bench_data = st.session_state["benchmark_results"]
+        ds_info = bench_data.get("dataset_info", {})
+        evals = bench_data.get("evaluations", [])
+
+        st.divider()
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Dataset Rows", f"{ds_info.get('total_rows', 0):,}")
+        m2.metric("Baseline Peak RAM (O(N))", f"{bench_data.get('baseline_peak_kb', 0):,.1f} KB")
+        m3.metric("Optimal Chunk Size (C*)", f"{bench_data.get('best_streaming_chunk_size', 0):,} rows")
+        max_red = bench_data.get("max_memory_reduction_pct", 0.0)
+        m4.metric("Max Memory Reduction", f"{max_red}%", delta=f"{max_red}% saved" if max_red > 0 else None)
+
+        eval_df = pd.DataFrame(evals)
+
+        c_chart1, c_chart2 = st.columns(2)
+        with c_chart1:
+            fig_mem = px.bar(
+                eval_df,
+                x="chunk_size_label",
+                y="peak_memory_kb",
+                color="mode",
+                title="Peak Memory Footprint (KB) by Chunk Size",
+                labels={"chunk_size_label": "Ingestion Mode / Chunk Size", "peak_memory_kb": "Peak Memory (KB)"},
+                template="plotly_white",
+            )
+            base_kb = bench_data.get("baseline_peak_kb", 0.0)
+            fig_mem.add_hline(
+                y=base_kb,
+                line_dash="dash",
+                line_color="red",
+                annotation_text=f"Monolithic O(N) Baseline ({base_kb} KB)",
+            )
+            fig_mem.update_layout(margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
+            st.plotly_chart(fig_mem, use_container_width=True)
+
+        with c_chart2:
+            fig_time = px.line(
+                eval_df[eval_df["chunk_size"].notna()],
+                x="chunk_size",
+                y="elapsed_seconds",
+                markers=True,
+                title="Execution Latency Tradeoff Curve",
+                labels={"chunk_size": "Chunk Size (C)", "elapsed_seconds": "Wall-Clock Time (seconds)"},
+                template="plotly_white",
+            )
+            fig_time.update_layout(margin=dict(l=20, r=20, t=40, b=20))
+            st.plotly_chart(fig_time, use_container_width=True)
+
+        st.write("##### 📊 Quantitative Benchmark Results")
+        display_cols = [
+            "mode",
+            "chunk_size_label",
+            "peak_memory_kb",
+            "peak_memory_mb",
+            "elapsed_seconds",
+            "throughput_rows_sec",
+            "memory_reduction_pct",
+            "num_chunks",
+        ]
+        col_names = {
+            "mode": "Pipeline Strategy",
+            "chunk_size_label": "Chunk Size",
+            "peak_memory_kb": "Peak Memory (KB)",
+            "peak_memory_mb": "Peak Memory (MB)",
+            "elapsed_seconds": "Latency (s)",
+            "throughput_rows_sec": "Throughput (rows/s)",
+            "memory_reduction_pct": "RAM Reduction (%)",
+            "num_chunks": "Chunk Iterations",
+        }
+        renamed_df = eval_df[display_cols].rename(columns=col_names)
+        st.dataframe(renamed_df, use_container_width=True)
+
+
 # --- MAIN APP: UPLOAD & ANALYZE ---
+
+st.write("### 📂 Tabular Dataset Ingestion")
+with st.expander("⚙️ Memory Optimization & Ingestion Configuration", expanded=False):
+    cfg_col1, cfg_col2 = st.columns(2)
+    with cfg_col1:
+        use_chunked = st.checkbox(
+            "Enable Chunked Ingestion (Bounded O(C) Memory)",
+            value=True,
+            help="Ingests CSV data in bounded chunksize slices rather than monolithic O(N) allocation.",
+            key="cfg_use_chunked",
+        )
+    with cfg_col2:
+        selected_chunksize = st.select_slider(
+            "Ingestion Chunk Size (rows per batch):",
+            options=[1000, 5000, 10000, 25000, 50000],
+            value=DEFAULT_CHUNKSIZE,
+            disabled=not use_chunked,
+            key="cfg_chunksize",
+        )
 
 file = st.file_uploader("Upload CSV", type="csv")
 
@@ -501,7 +633,14 @@ if file:
     summary: Optional[Dict[str, object]] = None
 
     try:
-        raw_df = pd.read_csv(file)
+        if use_chunked:
+            raw_df = read_csv_chunked(file, chunksize=selected_chunksize)
+        else:
+            raw_df = pd.read_csv(file)
+
+        if hasattr(file, "seek"):
+            file.seek(0)
+
         if raw_df.empty:
             st.error("The uploaded CSV file is empty.")
         else:
@@ -518,11 +657,12 @@ if file:
 
         with col1:
             st.write("### 📊 Statistical Data Science & Visual EDA")
-            tab_summary, tab_corr, tab_skew, tab_outliers = st.tabs([
+            tab_summary, tab_corr, tab_skew, tab_outliers, tab_memory = st.tabs([
                 "📋 Summary & Distribution",
                 "🔥 Correlation Heatmap",
                 "📈 Skewness & Kurtosis",
                 "🎯 Outlier Detection",
+                "🔬 Memory & Chunk Evaluation",
             ])
 
             with tab_summary:
@@ -552,10 +692,14 @@ if file:
                 st.write("#### Statistical Outlier Detection")
                 render_outlier_inspector(df, summary.get("outliers", {}))  # type: ignore[arg-type]
 
+            with tab_memory:
+                render_memory_evaluation_tab(file)
+
         with col2:
             st.write("### AI Analysis Controls")
 
             custom_title = st.text_input("Name this analysis", value=getattr(file, "name", "dataset.csv"))
+
 
             if st.button("Generate Insights"):
                 with st.spinner("Consulting the AI Analyst..."):
@@ -590,3 +734,10 @@ if file:
         st.divider()
         st.write("### 🤖 Generated Insights")
         render_structured_insights(st.session_state["generated_insight"])
+else:
+    with st.expander("🔬 CS Faculty Evaluation: Live Memory Benchmark Sandbox", expanded=False):
+        st.caption(
+            "No CSV uploaded yet. Run an empirical memory footprint evaluation against a synthetic 20,000-row dataset "
+            "to benchmark monolithic $O(N)$ vs bounded $O(C)$ chunk sizes:"
+        )
+        render_memory_evaluation_tab(None)
