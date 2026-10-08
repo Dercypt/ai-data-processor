@@ -55,11 +55,16 @@ def get_db_path() -> str:
 
 
 def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
-    """Open and return a configured SQLite connection with foreign keys enabled."""
+    """
+    Open and return a configured SQLite connection with foreign keys enabled,
+    WAL journal mode, and NORMAL synchronous mode for concurrent multi-analyst access.
+    """
     target_path = db_path or get_db_path()
     conn = sqlite3.connect(target_path, timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
     return conn
 
 
