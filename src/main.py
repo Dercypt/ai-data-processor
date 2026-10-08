@@ -13,7 +13,16 @@ from analyzer import (
     impute_missing_values,
 )
 from llm_service import get_ai_insights
-from database import init_db, save_entry, get_all_entries, delete_entry
+from database import (
+    init_db,
+    save_entry,
+    get_all_entries,
+    delete_entry,
+    create_user,
+    authenticate_user,
+    UserAlreadyExistsError,
+    AuthenticationError,
+)
 
 # 1. Initialize DB on app startup
 init_db()
@@ -24,6 +33,8 @@ st.title("AI Data Processor")
 # --- SESSION STATE INITIALIZATION ---
 if "generated_insight" not in st.session_state:
     st.session_state["generated_insight"] = None
+if "current_user" not in st.session_state:
+    st.session_state["current_user"] = None
 
 
 def render_sidebar_insights(insights: str) -> None:
@@ -51,26 +62,79 @@ def render_sidebar_insights(insights: str) -> None:
     st.info(insights)
 
 
+# --- SIDEBAR: AUTHENTICATION & WORKSPACE ---
+st.sidebar.title("Analyst Workspace")
+
+if st.session_state["current_user"] is None:
+    st.sidebar.subheader("🔐 Analyst Login")
+    auth_action = st.sidebar.radio("Account Action", ["Login", "Register"], horizontal=True, key="auth_action_radio")
+
+    with st.sidebar.form("auth_form"):
+        auth_username = st.text_input("Username", key="auth_user_field").strip()
+        auth_password = st.text_input("Password", type="password", key="auth_pass_field").strip()
+        auth_submit = st.form_submit_button(auth_action)
+
+        if auth_submit:
+            if not auth_username or not auth_password:
+                st.sidebar.error("Username and password are required.")
+            elif auth_action == "Register":
+                try:
+                    create_user(auth_username, auth_password)
+                    st.sidebar.success(f"Account created for '{auth_username}'! You can now log in.")
+                except UserAlreadyExistsError:
+                    st.sidebar.error(f"Username '{auth_username}' is already taken.")
+                except Exception as e:
+                    st.sidebar.error(f"Registration failed: {e}")
+            elif auth_action == "Login":
+                try:
+                    user_record = authenticate_user(auth_username, auth_password)
+                    st.session_state["current_user"] = user_record
+                    st.sidebar.success(f"Welcome back, {user_record['username']}!")
+                    st.rerun()
+                except AuthenticationError:
+                    st.sidebar.error("Invalid username or password.")
+                except Exception as e:
+                    st.sidebar.error(f"Login failed: {e}")
+else:
+    current_username = st.session_state["current_user"]["username"]
+    st.sidebar.markdown(f"👤 Logged in as: **{current_username}**")
+    if st.sidebar.button("Logout", key="btn_logout"):
+        st.session_state["current_user"] = None
+        st.rerun()
+
+st.sidebar.divider()
+
 # --- SIDEBAR: HISTORY & MANAGEMENT ---
 st.sidebar.title("Analysis History")
 
-# Fetch updated history
-history = get_all_entries()
+active_user = st.session_state["current_user"]
+active_user_id = active_user["id"] if active_user else None
+
+if active_user:
+    st.sidebar.caption(f"Private history for **{active_user['username']}**")
+else:
+    st.sidebar.caption("Shared / Guest workspace")
+
+# Fetch updated history for the active workspace
+history = get_all_entries(user_id=active_user_id)
 
 if not history:
     st.sidebar.text("No past analyses.")
 else:
     for entry_id, timestamp, title, insights in history:
         label = f"{title} ({timestamp[11:16]})"
-        
+
         with st.sidebar.expander(label):
             st.caption(f"Date: {timestamp[:10]}")
             render_sidebar_insights(str(insights))
-            
+
             # The Delete Button
             if st.button("🗑️ Delete", key=f"del_{entry_id}"):
-                delete_entry(entry_id)
-                st.rerun()
+                try:
+                    delete_entry(entry_id, user_id=active_user_id)
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Failed to delete entry: {e}")
 
 
 # --- INTERACTIVE VISUALIZATION HELPERS ---
@@ -508,7 +572,12 @@ if file:
                         insights = get_ai_insights(ai_payload)
                         st.session_state["generated_insight"] = insights
 
-                        save_entry(custom_title, insights)
+                        active_uid = (
+                            st.session_state["current_user"]["id"]
+                            if st.session_state.get("current_user")
+                            else None
+                        )
+                        save_entry(custom_title, insights, user_id=active_uid)
                         st.success("Saved to History!")
 
                         time.sleep(0.5)
