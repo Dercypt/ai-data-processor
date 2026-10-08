@@ -1,8 +1,11 @@
 import json
 import os
 from typing import Dict, List, Optional, Union
-import google.generativeai as genai
+
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
+
 try:
     import streamlit as st
 except ImportError:
@@ -63,18 +66,6 @@ def get_ai_insights(summary: Union[Dict[str, object], str]) -> Dict[str, Union[s
             "Google API Key missing. Please configure 'GOOGLE_API_KEY' in .streamlit/secrets.toml or as an environment variable."
         )
 
-    genai.configure(api_key=api_key)
-
-    generation_config = genai.GenerationConfig(
-        response_mime_type="application/json",
-        response_schema=InsightsSchema,
-    )
-
-    model = genai.GenerativeModel(
-        model_name="gemini-flash-latest",
-        generation_config=generation_config,
-    )
-
     formatted_summary = (
         json.dumps(summary, indent=2)
         if isinstance(summary, (dict, list))
@@ -92,7 +83,19 @@ Aggregated Data Summary:
 """
 
     try:
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=InsightsSchema,
+            ),
+        )
+
+        if not response.text:
+            raise LLMGenerationError("Empty response received from LLM service.")
+
         text = response.text.strip()
         if text.startswith("```"):
             lines = text.splitlines()
@@ -110,4 +113,9 @@ Aggregated Data Summary:
             "recommendations": validated.recommendations,
         }
     except Exception as e:
-        raise LLMGenerationError(f"Failed to generate structured insights: {e}") from e
+        if isinstance(e, (LLMConfigurationError, LLMGenerationError)):
+            raise
+        err_msg = str(e)
+        if api_key in err_msg:
+            err_msg = err_msg.replace(api_key, "[REDACTED]")
+        raise LLMGenerationError(f"Failed to generate structured insights: {err_msg}") from e

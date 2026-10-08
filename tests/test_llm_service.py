@@ -56,18 +56,17 @@ class TestLLMService(unittest.TestCase):
             self.assertIn("Google API Key missing", str(ctx.exception))
 
     @patch("llm_service.get_api_key", return_value="fake-api-key")
-    @patch("llm_service.genai.configure")
-    @patch("llm_service.genai.GenerativeModel")
-    def test_structured_ai_insights_success(self, mock_model_cls, mock_configure, mock_get_api_key):
+    @patch("llm_service.genai.Client")
+    def test_structured_ai_insights_success(self, mock_client_cls, mock_get_api_key):
         mock_response = MagicMock()
         mock_response.text = json.dumps({
             "summary": "Overall normal distributions with slight right skew on profit.",
             "risks": ["Profit variance indicates potential volatility.", "Missing values in region column."],
             "recommendations": ["Impute missing regional data.", "Hedge risk for volatile products."],
         })
-        mock_instance = MagicMock()
-        mock_instance.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_instance
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_cls.return_value = mock_client
 
         summary_payload = {
             "columns": ["sales", "profit"],
@@ -76,11 +75,14 @@ class TestLLMService(unittest.TestCase):
         }
         result = get_ai_insights(summary_payload)
 
-        mock_configure.assert_called_once_with(api_key="fake-api-key")
-        self.assertIn("generation_config", mock_model_cls.call_args[1])
-        gen_config = mock_model_cls.call_args[1]["generation_config"]
-        self.assertEqual(gen_config.response_mime_type, "application/json")
-        self.assertEqual(gen_config.response_schema, InsightsSchema)
+        mock_client_cls.assert_called_once_with(api_key="fake-api-key")
+        self.assertEqual(mock_client.models.generate_content.call_count, 1)
+        _, kwargs = mock_client.models.generate_content.call_args
+        self.assertEqual(kwargs.get("model"), "gemini-2.5-flash")
+        config = kwargs.get("config")
+        self.assertIsNotNone(config)
+        self.assertEqual(config.response_mime_type, "application/json")
+        self.assertEqual(config.response_schema, InsightsSchema)
 
         self.assertIsInstance(result, dict)
         self.assertEqual(result["summary"], "Overall normal distributions with slight right skew on profit.")
@@ -88,9 +90,8 @@ class TestLLMService(unittest.TestCase):
         self.assertEqual(len(result["recommendations"]), 2)
 
     @patch("llm_service.get_api_key", return_value="fake-api-key")
-    @patch("llm_service.genai.configure")
-    @patch("llm_service.genai.GenerativeModel")
-    def test_structured_ai_insights_markdown_fence_stripping(self, mock_model_cls, mock_configure, mock_get_api_key):
+    @patch("llm_service.genai.Client")
+    def test_structured_ai_insights_markdown_fence_stripping(self, mock_client_cls, mock_get_api_key):
         mock_response = MagicMock()
         mock_response.text = """```json
 {
@@ -99,9 +100,9 @@ class TestLLMService(unittest.TestCase):
   "recommendations": ["Collect more samples"]
 }
 ```"""
-        mock_instance = MagicMock()
-        mock_instance.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_instance
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_cls.return_value = mock_client
 
         result = get_ai_insights("Summary string")
         self.assertEqual(result["summary"], "Clean dataset summary.")
@@ -109,29 +110,52 @@ class TestLLMService(unittest.TestCase):
         self.assertEqual(result["recommendations"], ["Collect more samples"])
 
     @patch("llm_service.get_api_key", return_value="fake-api-key")
-    @patch("llm_service.genai.configure")
-    @patch("llm_service.genai.GenerativeModel")
-    def test_structured_ai_insights_invalid_json_raises_generation_error(self, mock_model_cls, mock_configure, mock_get_api_key):
+    @patch("llm_service.genai.Client")
+    def test_structured_ai_insights_invalid_json_raises_generation_error(self, mock_client_cls, mock_get_api_key):
         mock_response = MagicMock()
         mock_response.text = "Not a valid JSON response"
-        mock_instance = MagicMock()
-        mock_instance.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_instance
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_cls.return_value = mock_client
 
         with self.assertRaises(LLMGenerationError):
             get_ai_insights({"rows": 10})
 
     @patch("llm_service.get_api_key", return_value="fake-api-key")
-    @patch("llm_service.genai.configure")
-    @patch("llm_service.genai.GenerativeModel")
-    def test_structured_ai_insights_api_exception_raises_generation_error(self, mock_model_cls, mock_configure, mock_get_api_key):
-        mock_instance = MagicMock()
-        mock_instance.generate_content.side_effect = RuntimeError("Quota exceeded or network error")
-        mock_model_cls.return_value = mock_instance
+    @patch("llm_service.genai.Client")
+    def test_structured_ai_insights_api_exception_raises_generation_error(self, mock_client_cls, mock_get_api_key):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = RuntimeError("Quota exceeded or network error")
+        mock_client_cls.return_value = mock_client
 
         with self.assertRaises(LLMGenerationError) as ctx:
             get_ai_insights({"rows": 10})
         self.assertIn("Failed to generate structured insights", str(ctx.exception))
+
+    @patch("llm_service.get_api_key", return_value="fake-api-key")
+    @patch("llm_service.genai.Client")
+    def test_structured_ai_insights_empty_response_raises_generation_error(self, mock_client_cls, mock_get_api_key):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = ""
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+
+        with self.assertRaises(LLMGenerationError) as ctx:
+            get_ai_insights({"rows": 10})
+        self.assertIn("Empty response", str(ctx.exception))
+
+    @patch("llm_service.get_api_key", return_value="secret-api-key-12345")
+    @patch("llm_service.genai.Client")
+    def test_structured_ai_insights_redacts_api_key_in_error(self, mock_client_cls, mock_get_api_key):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = RuntimeError("Error with secret-api-key-12345 to API")
+        mock_client_cls.return_value = mock_client
+
+        with self.assertRaises(LLMGenerationError) as ctx:
+            get_ai_insights({"rows": 10})
+        self.assertNotIn("secret-api-key-12345", str(ctx.exception))
+        self.assertIn("[REDACTED]", str(ctx.exception))
 
 
 if __name__ == "__main__":
