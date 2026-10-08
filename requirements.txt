@@ -1,6 +1,6 @@
 pandas
 streamlit
-google-generativeai
+google-genai
 python-dotenv
 st-gsheets-connection
 plotly
