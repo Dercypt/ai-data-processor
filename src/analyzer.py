@@ -1068,17 +1068,24 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
 
     # 4. Cross-Feature Bivariate Coupling Discrepancy Rules
     if len(cols) >= 2:
-        corr_matrix = numeric_df.corr(method="pearson").fillna(0.0)
+        pearson_matrix = numeric_df.corr(method="pearson").fillna(0.0)
+        spearman_matrix = numeric_df.corr(method="spearman").fillna(0.0)
         for i in range(len(cols)):
             col_a = cols[i]
             for j in range(i + 1, len(cols)):
                 col_b = cols[j]
-                r = float(corr_matrix.loc[col_a, col_b])
+                r_p = float(pearson_matrix.loc[col_a, col_b])
+                r_s = float(spearman_matrix.loc[col_a, col_b])
+                r = r_s if abs(r_s) >= abs(r_p) else r_p
                 if abs(r) >= 0.70:
                     s_a = numeric_df[col_a].dropna()
                     s_b = numeric_df[col_b].dropna()
-                    mean_a, std_a = float(s_a.mean()), float(s_a.std(ddof=0))
-                    mean_b, std_b = float(s_b.mean()), float(s_b.std(ddof=0))
+                    mean_a = float(s_a.median())
+                    mean_b = float(s_b.median())
+                    iqr_a = float(s_a.quantile(0.75) - s_a.quantile(0.25))
+                    iqr_b = float(s_b.quantile(0.75) - s_b.quantile(0.25))
+                    std_a = (iqr_a / 1.349) if iqr_a > 1e-6 else float(s_a.std(ddof=0))
+                    std_b = (iqr_b / 1.349) if iqr_b > 1e-6 else float(s_b.std(ddof=0))
 
                     if std_a > 1e-6 and std_b > 1e-6:
                         residual_std = math.sqrt(max(1.0 - (r * r), 0.05))
