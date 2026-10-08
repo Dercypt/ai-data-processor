@@ -9,7 +9,10 @@ from typing import Dict, List, Optional, Tuple, Union
 from analyzer import (
     DEFAULT_CHUNKSIZE,
     analyze_dataset,
+    benchmark_imputation_drift,
+    build_feature_dependency_graph,
     detect_column_types,
+    evaluate_heuristic_rules,
     evaluate_memory_footprint,
     generate_summary,
     impute_missing_values,
@@ -176,6 +179,175 @@ def render_correlation_heatmap(corr_data: Dict[str, Dict[str, float]]) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def render_feature_dependency_graph(
+    df: pd.DataFrame,
+    initial_graph_data: Dict[str, object],
+) -> None:
+    """Render interactive feature correlation dependency network graph with topological metrics and MST."""
+    numeric_cols = list(df.select_dtypes(include=["number"]).columns)
+    if len(numeric_cols) < 2:
+        st.info("At least 2 numeric features are required to generate a dependency network graph.")
+        return
+
+    st.markdown("#### 🕸️ Feature Correlation Dependency Network Graph")
+    st.caption(
+        "Topological graph modeling feature dependencies. Nodes represent continuous features; "
+        "edges represent Pearson correlation $|r| \\ge \\tau$. Graph algorithms compute Degree Centrality, "
+        "Connected Components (via Disjoint Set Union), and Maximum Spanning Tree (MST backbone via Kruskal's algorithm)."
+    )
+
+    c_cfg1, c_cfg2 = st.columns([2, 1])
+    with c_cfg1:
+        corr_thresh = st.slider(
+            "Correlation Edge Threshold (τ):",
+            min_value=0.10,
+            max_value=0.95,
+            value=float(initial_graph_data.get("threshold", 0.30)),
+            step=0.05,
+            key="graph_corr_thresh_slider",
+        )
+    with c_cfg2:
+        mst_only = st.checkbox(
+            "Show MST Backbone Only",
+            value=False,
+            help="Filters graph edges to Kruskal's Maximum Spanning Tree (MST) acyclic backbone.",
+            key="graph_mst_only_toggle",
+        )
+
+    # Compute or reuse graph data based on slider
+    if abs(corr_thresh - float(initial_graph_data.get("threshold", 0.30))) > 1e-4:
+        graph_data = build_feature_dependency_graph(df, threshold=corr_thresh)
+    else:
+        graph_data = initial_graph_data
+
+    metrics = graph_data.get("metrics", {})
+    if not isinstance(metrics, dict):
+        metrics = {}
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Features (Nodes)", metrics.get("total_nodes", len(numeric_cols)))
+    m2.metric("Dependencies (Edges)", metrics.get("total_edges", 0))
+    m3.metric("Network Density", f"{metrics.get('density', 0.0):.3f}")
+    m4.metric("Connected Components", metrics.get("num_connected_components", 1))
+    isolated = metrics.get("isolated_nodes", [])
+    m5.metric("Isolated Features", len(isolated) if isinstance(isolated, list) else 0)
+
+    nodes_list = graph_data.get("nodes", [])
+    edges_list = graph_data.get("edges", [])
+    if not isinstance(nodes_list, list) or not isinstance(edges_list, list):
+        return
+
+    node_pos: Dict[str, Tuple[float, float]] = {}
+    for n in nodes_list:
+        if isinstance(n, dict):
+            node_pos[str(n["id"])] = (float(n.get("x", 0.0)), float(n.get("y", 0.0)))
+
+    fig = go.Figure()
+
+    # Draw edges
+    for e in edges_list:
+        if not isinstance(e, dict):
+            continue
+        if mst_only and not bool(e.get("is_mst_backbone", False)):
+            continue
+
+        src = str(e["source"])
+        tgt = str(e["target"])
+        if src not in node_pos or tgt not in node_pos:
+            continue
+
+        x0, y0 = node_pos[src]
+        x1, y1 = node_pos[tgt]
+        corr_val = float(e.get("correlation", 0.0))
+        weight_val = float(e.get("weight", abs(corr_val)))
+        is_mst = bool(e.get("is_mst_backbone", False))
+
+        if is_mst:
+            line_color = "#1f77b4" if corr_val >= 0 else "#d62728"
+            line_width = max(2.5 * weight_val, 1.5)
+        else:
+            line_color = "rgba(31, 119, 180, 0.4)" if corr_val >= 0 else "rgba(214, 39, 40, 0.4)"
+            line_width = max(1.5 * weight_val, 0.8)
+
+        fig.add_trace(go.Scatter(
+            x=[x0, x1, None],
+            y=[y0, y1, None],
+            mode="lines",
+            line=dict(width=line_width, color=line_color),
+            hoverinfo="text",
+            hovertext=f"{src} ↔ {tgt}<br>r = {corr_val:.3f} (weight={weight_val:.3f})<br>MST Backbone: {is_mst}",
+            showlegend=False,
+        ))
+
+    # Draw nodes
+    node_x: List[float] = []
+    node_y: List[float] = []
+    node_text: List[str] = []
+    node_size: List[float] = []
+    node_color: List[int] = []
+
+    for n in nodes_list:
+        if not isinstance(n, dict):
+            continue
+        nid = str(n["id"])
+        nx, ny = node_pos.get(nid, (0.0, 0.0))
+        node_x.append(nx)
+        node_y.append(ny)
+        deg = int(n.get("degree", 0))
+        cent = float(n.get("degree_centrality", 0.0))
+        str_val = float(n.get("strength", 0.0))
+        comm = int(n.get("community_id", 0))
+
+        node_text.append(
+            f"<b>{nid}</b><br>Degree: {deg}<br>Centrality: {cent:.3f}<br>Strength: {str_val:.3f}<br>Component: {comm}"
+        )
+        node_size.append(max(20 + 35 * cent, 16))
+        node_color.append(comm)
+
+    fig.add_trace(go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode="markers+text",
+        text=[str(n["id"]) for n in nodes_list if isinstance(n, dict)],
+        textposition="top center",
+        hoverinfo="text",
+        hovertext=node_text,
+        marker=dict(
+            size=node_size,
+            color=node_color,
+            colorscale="Viridis",
+            line=dict(width=2, color="#333333"),
+            showscale=False,
+        ),
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        title=f"Feature Dependency Network (τ = {corr_thresh:.2f}{' | MST Backbone' if mst_only else ''})",
+        showlegend=False,
+        hovermode="closest",
+        margin=dict(b=20, l=20, r=20, t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        template="plotly_white",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Topological Centrality Leaderboard Table
+    st.write("##### 🏆 Graph Centrality & Topological Hubs")
+    cent_rows = []
+    for n in sorted(nodes_list, key=lambda item: float(item.get("degree_centrality", 0.0)), reverse=True):  # type: ignore[arg-type]
+        if isinstance(n, dict):
+            cent_rows.append({
+                "Feature": n["id"],
+                "Degree": n["degree"],
+                "Degree Centrality": f"{float(n.get('degree_centrality', 0.0)):.3f}",
+                "Weighted Strength": f"{float(n.get('strength', 0.0)):.3f}",
+                "Community (DSU Cluster)": n.get("community_id", 0),
+            })
+    st.dataframe(pd.DataFrame(cent_rows), use_container_width=True)
+
+
 def render_skewness_kurtosis_chart(
     skew_data: Dict[str, float],
     kurt_data: Dict[str, float],
@@ -236,7 +408,12 @@ def render_outlier_inspector(
 
     method = st.radio(
         "Select Outlier Detection Method:",
-        options=["IQR (Interquartile Range)", "Z-Score (|z| > 3)", "Isolation Forest (ML Anomaly Detection)"],
+        options=[
+            "IQR (Interquartile Range)",
+            "Z-Score (|z| > 3)",
+            "Custom Heuristic Rule Engine (Explainable AI)",
+            "Isolation Forest (ML Anomaly Detection)",
+        ],
         horizontal=True,
     )
 
@@ -314,6 +491,96 @@ def render_outlier_inspector(
             template="plotly_white",
         )
         st.plotly_chart(fig, use_container_width=True)
+
+    elif method.startswith("Custom Heuristic"):
+        heur_data = outliers_data.get("heuristic_rules", {})  # type: ignore[union-attr]
+        if not isinstance(heur_data, dict) or not heur_data:
+            st.info("No heuristic rule anomaly data available.")
+            return
+
+        h_count = int(heur_data.get("total_anomalies", 0))
+        h_pct = float(heur_data.get("anomaly_percentage", 0.0))
+        h_rules_cnt = int(heur_data.get("total_rules", 0))
+        outlier_indices = set(heur_data.get("anomalous_indices", []))
+
+        hc1, hc2 = st.columns(2)
+        hc1.metric("Heuristic Anomalies Flagged", h_count, delta=f"{h_pct}% of dataset")
+        hc2.metric("Declarative Rules Synthesized", h_rules_cnt)
+
+        st.info(
+            "💡 **Computer Science Contribution - Explainable Rule Engine vs Blackbox Isolation Forest:**\n\n"
+            "While Scikit-Learn's IsolationForest operates as an uninterpretable ensemble of random isolation trees, "
+            "this custom engine synthesizes declarative heuristic rules (multivariate coupling discrepancies, "
+            "statistical outer fences, and domain invariants) and computes a weighted composite anomaly score "
+            "with full causality attribution for every observation."
+        )
+
+        rules_list = heur_data.get("rules_evaluated", [])
+        if isinstance(rules_list, list) and rules_list:
+            st.write("##### 📜 Synthesized Heuristic Rules & Violation Diagnostics")
+            st.dataframe(pd.DataFrame(rules_list)[[
+                "rule_id", "name", "rule_type", "severity", "violation_count", "violation_pct", "description"
+            ]].rename(columns={
+                "rule_id": "Rule ID",
+                "name": "Rule Name",
+                "rule_type": "Rule Type",
+                "severity": "Severity Weight",
+                "violation_count": "Violations",
+                "violation_pct": "Violation %",
+                "description": "Rule Logic",
+            }), use_container_width=True)
+
+        plot_df = df.copy()
+        plot_df["Status"] = ["Heuristic Anomaly" if i in outlier_indices else "Normal" for i in plot_df.index]
+
+        if len(numeric_cols) >= 2:
+            c1, c2 = st.columns(2)
+            with c1:
+                x_axis = st.selectbox("X-Axis Feature:", numeric_cols, index=0, key="heur_x")
+            with c2:
+                y_axis = st.selectbox("Y-Axis Feature:", numeric_cols, index=1, key="heur_y")
+
+            fig = px.scatter(
+                plot_df,
+                x=x_axis,
+                y=y_axis,
+                color="Status",
+                color_discrete_map={"Normal": "#1f77b4", "Heuristic Anomaly": "#d62728"},
+                title=f"Heuristic Anomaly Map: {x_axis} vs {y_axis}",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            fig = px.scatter(
+                plot_df,
+                x=plot_df.index,
+                y=numeric_cols[0],
+                color="Status",
+                color_discrete_map={"Normal": "#1f77b4", "Heuristic Anomaly": "#d62728"},
+                title=f"Heuristic Anomalies for '{numeric_cols[0]}'",
+                labels={"x": "Index", "y": numeric_cols[0]},
+                template="plotly_white",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        top_anom = heur_data.get("top_anomalies", [])
+        if isinstance(top_anom, list) and top_anom:
+            st.write("##### 🔬 Explainable AI: Record-Level Attribution & Rule Violations")
+            attribution_rows = []
+            for item in top_anom:
+                if isinstance(item, dict):
+                    violations_str = "; ".join(
+                        f"[{v.get('rule_id')}]: {v.get('description')}"
+                        for v in item.get("violations", [])
+                        if isinstance(v, dict)
+                    )
+                    attribution_rows.append({
+                        "Record Index": item.get("index"),
+                        "Composite Anomaly Score": item.get("composite_score"),
+                        "Violated Rules Count": item.get("violated_rules_count"),
+                        "Attributed Rule Violations": violations_str,
+                    })
+            st.dataframe(pd.DataFrame(attribution_rows), use_container_width=True)
 
     else:  # Isolation Forest
         iso_data = outliers_data.get("isolation_forest", {})  # type: ignore[union-attr]
@@ -605,6 +872,91 @@ def render_memory_evaluation_tab(file_or_data: Optional[object]) -> None:
         st.dataframe(renamed_df, use_container_width=True)
 
 
+def render_imputation_drift_benchmark(
+    df: pd.DataFrame,
+    initial_drift_data: Dict[str, object],
+) -> None:
+    """Render interactive Imputation Data Drift Benchmark evaluating Wasserstein, KS, and PSI metrics."""
+    st.markdown("#### 🔬 Imputation Algorithm Data Drift Benchmark")
+    st.caption(
+        "Quantitative empirical benchmark evaluating how different missing-data imputation algorithms "
+        "alter the underlying probability distribution against mathematical data drift metrics."
+    )
+
+    with st.expander("💡 Mathematical Formulations of Distribution Drift Metrics", expanded=False):
+        st.markdown(
+            "- **Wasserstein Distance ($W_1$ / Earth Mover's Distance):** "
+            "$W_1(P, Q) = \\int |F_P(t) - F_Q(t)| dt$. Measures the minimum mass-transportation cost "
+            "to morph the imputed distribution into the true observed distribution.\n"
+            "- **Kolmogorov-Smirnov Statistic ($D_{KS}$):** "
+            "$D = \\sup_x |F_{\\text{imputed}}(x) - F_{\\text{observed}}(x)| \\in [0, 1]$. "
+            "Measures maximum vertical deviation between empirical cumulative distribution functions.\n"
+            "- **Population Stability Index (PSI):** "
+            "$\\text{PSI} = \\sum_{b=1}^B (P_b - Q_b) \\ln(P_b / Q_b)$. Quantifies bin-wise probability divergence "
+            "(PSI < 0.1: Stable, 0.1-0.25: Moderate Drift, > 0.25: Severe Drift).\n"
+            "- **Moment Preservation ($\Delta\mu, \Delta\sigma$):** "
+            "Absolute shift in first (mean) and second (standard deviation) central moments."
+        )
+
+    drift_data = initial_drift_data
+    leaderboard = drift_data.get("leaderboard", [])
+    if not isinstance(leaderboard, list) or not leaderboard:
+        st.info("No numeric features with sufficient sample size (>=10) for imputation drift benchmarking.")
+        return
+
+    optimal_strategy = str(drift_data.get("optimal_strategy", "mean")).capitalize()
+    st.success(f"🏆 **Optimal Imputation Strategy for this Dataset:** `{optimal_strategy}` (Minimizes empirical composite drift)")
+
+    # Display Leaderboard
+    st.write("##### 📊 Imputation Strategy Drift Scorecard")
+    lb_df = pd.DataFrame(leaderboard)
+    column_renames = {
+        "rank": "Rank",
+        "strategy": "Imputation Algorithm",
+        "composite_drift_score": "Composite Drift Score",
+        "avg_ks_statistic": "Avg KS Statistic (D)",
+        "avg_psi": "Avg PSI",
+        "avg_wasserstein": "Avg Wasserstein (W1)",
+        "avg_mean_shift": "Avg Mean Shift (Δμ)",
+        "avg_std_shift": "Avg Std Shift (Δσ)",
+    }
+    display_df = lb_df[[c for c in column_renames if c in lb_df.columns]].rename(columns=column_renames)
+    st.dataframe(display_df, use_container_width=True)
+
+    fig_lb = px.bar(
+        lb_df,
+        x="strategy",
+        y="composite_drift_score",
+        color="strategy",
+        title="Composite Distribution Drift Score by Imputation Method (Lower is Better)",
+        labels={"strategy": "Imputation Method", "composite_drift_score": "Composite Drift Score"},
+        template="plotly_white",
+    )
+    fig_lb.update_layout(showlegend=False, margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig_lb, use_container_width=True)
+
+    valid_features = drift_data.get("evaluated_features", [])
+    if isinstance(valid_features, list) and valid_features:
+        st.write("##### 🔍 Feature-Level Distribution Inspection")
+        sel_feat = st.selectbox("Select Feature to Inspect:", valid_features, key="drift_feat_select")
+        per_feat = drift_data.get("per_feature_results", {})
+        if isinstance(per_feat, dict) and sel_feat in per_feat:
+            feat_metrics = per_feat[sel_feat]
+            feat_rows = []
+            for strat, metrics_map in feat_metrics.items():
+                if isinstance(metrics_map, dict):
+                    feat_rows.append({
+                        "Strategy": strat,
+                        "Composite Drift Score": metrics_map.get("composite_score", 0.0),
+                        "KS Statistic": metrics_map.get("ks_statistic", 0.0),
+                        "PSI": metrics_map.get("psi", 0.0),
+                        "Wasserstein (W1)": metrics_map.get("wasserstein", 0.0),
+                        "Mean Shift": metrics_map.get("mean_shift", 0.0),
+                        "Std Shift": metrics_map.get("std_shift", 0.0),
+                    })
+            st.dataframe(pd.DataFrame(feat_rows).sort_values("Composite Drift Score"), use_container_width=True)
+
+
 # --- MAIN APP: UPLOAD & ANALYZE ---
 
 st.write("### 📂 Tabular Dataset Ingestion")
@@ -657,12 +1009,14 @@ if file:
 
         with col1:
             st.write("### 📊 Statistical Data Science & Visual EDA")
-            tab_summary, tab_corr, tab_skew, tab_outliers, tab_memory = st.tabs([
+            tab_summary, tab_corr, tab_network, tab_skew, tab_outliers, tab_drift, tab_memory = st.tabs([
                 "📋 Summary & Distribution",
                 "🔥 Correlation Heatmap",
+                "🕸️ Dependency Network Graph",
                 "📈 Skewness & Kurtosis",
                 "🎯 Outlier Detection",
-                "🔬 Memory & Chunk Evaluation",
+                "🔬 Imputation Drift Benchmark",
+                "⚡ Memory & Chunk Evaluation",
             ])
 
             with tab_summary:
@@ -679,6 +1033,9 @@ if file:
                 st.write("#### Correlation Analysis")
                 render_correlation_heatmap(summary.get("correlation", {}))  # type: ignore[arg-type]
 
+            with tab_network:
+                render_feature_dependency_graph(df, summary.get("dependency_graph", {}))  # type: ignore[arg-type]
+
             with tab_skew:
                 st.write("#### Skewness & Kurtosis Testing")
                 render_skewness_kurtosis_chart(
@@ -691,6 +1048,9 @@ if file:
             with tab_outliers:
                 st.write("#### Statistical Outlier Detection")
                 render_outlier_inspector(df, summary.get("outliers", {}))  # type: ignore[arg-type]
+
+            with tab_drift:
+                render_imputation_drift_benchmark(df, summary.get("imputation_drift", {}))  # type: ignore[arg-type]
 
             with tab_memory:
                 render_memory_evaluation_tab(file)

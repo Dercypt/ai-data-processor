@@ -1,8 +1,9 @@
 import io
+import math
 import os
 import time
 import tracemalloc
-from typing import Dict, Generator, List, Optional, Tuple, Union
+from typing import Callable, Dict, Generator, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -413,6 +414,9 @@ def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
     iqr_outliers = detect_outliers_iqr(df)
     zscore_outliers = detect_outliers_zscore(df)
     iso_outliers = detect_outliers_isolation_forest(df)
+    dependency_graph = build_feature_dependency_graph(df)
+    heuristic_anomalies = evaluate_heuristic_rules(df)
+    imputation_drift = benchmark_imputation_drift(df)
 
     summary: Dict[str, object] = {
         "columns": list(df.columns),
@@ -428,7 +432,11 @@ def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
             "iqr": iqr_outliers,
             "zscore": zscore_outliers,
             "isolation_forest": iso_outliers,
+            "heuristic_rules": heuristic_anomalies,
         },
+        "dependency_graph": dependency_graph,
+        "heuristic_rules": heuristic_anomalies,
+        "imputation_drift": imputation_drift,
     }
     return summary
 
@@ -723,4 +731,716 @@ def evaluate_memory_footprint(
         "best_streaming_chunk_size": best_streaming_chunk_size,
         "max_memory_reduction_pct": max_memory_reduction_pct,
         "evaluations": results,
+    }
+
+
+class DisjointSetUnion:
+    """
+    Disjoint Set Union (DSU / Union-Find) data structure with path compression
+    and union-by-rank heuristics for O(alpha(V)) disjoint component tracking.
+    """
+
+    def __init__(self, elements: List[str]) -> None:
+        self.parent: Dict[str, str] = {e: e for e in elements}
+        self.rank: Dict[str, int] = {e: 0 for e in elements}
+
+    def find(self, item: str) -> str:
+        root = item
+        while self.parent[root] != root:
+            root = self.parent[root]
+        curr = item
+        while curr != root:
+            nxt = self.parent[curr]
+            self.parent[curr] = root
+            curr = nxt
+        return root
+
+    def union(self, item_a: str, item_b: str) -> bool:
+        root_a = self.find(item_a)
+        root_b = self.find(item_b)
+        if root_a == root_b:
+            return False
+        if self.rank[root_a] < self.rank[root_b]:
+            self.parent[root_a] = root_b
+        elif self.rank[root_a] > self.rank[root_b]:
+            self.parent[root_b] = root_a
+        else:
+            self.parent[root_b] = root_a
+            self.rank[root_a] += 1
+        return True
+
+
+def build_feature_dependency_graph(
+    df: pd.DataFrame,
+    threshold: float = 0.3,
+) -> Dict[str, object]:
+    """
+    Construct an automated feature correlation dependency network graph.
+    Computes graph theoretical topological metrics:
+    - Degree and weighted strength centrality per feature
+    - Connected component clustering via Disjoint Set Union (DSU)
+    - Maximum Spanning Tree (MST) dependency backbone via Kruskal's algorithm
+    - Deterministic 2D planar coordinates via spring embedding relaxation
+    """
+    if not (0.0 <= threshold <= 1.0):
+        raise ValueError(f"Correlation threshold must be between 0.0 and 1.0, got {threshold}")
+
+    numeric_df = df.select_dtypes(include=[np.number])
+    cols: List[str] = [str(c) for c in numeric_df.columns]
+    num_nodes = len(cols)
+
+    if num_nodes < 2:
+        empty_nodes: List[Dict[str, Union[str, int, float]]] = [
+            {
+                "id": c,
+                "degree": 0,
+                "degree_centrality": 0.0,
+                "strength": 0.0,
+                "community_id": 0,
+                "x": 0.0,
+                "y": 0.0,
+            }
+            for c in cols
+        ]
+        return {
+            "nodes": empty_nodes,
+            "edges": [],
+            "metrics": {
+                "total_nodes": num_nodes,
+                "total_edges": 0,
+                "density": 0.0,
+                "num_connected_components": num_nodes,
+                "isolated_nodes": cols,
+                "hub_nodes": [],
+            },
+            "threshold": threshold,
+        }
+
+    corr_matrix = numeric_df.corr(method="pearson").fillna(0.0)
+
+    # 1. Collect candidate undirected edges meeting threshold
+    raw_edges: List[Dict[str, Union[str, float]]] = []
+    for i in range(num_nodes):
+        u = cols[i]
+        for j in range(i + 1, num_nodes):
+            v = cols[j]
+            r = float(corr_matrix.loc[u, v])
+            weight = abs(r)
+            if weight >= threshold:
+                raw_edges.append({
+                    "source": u,
+                    "target": v,
+                    "weight": round(weight, 4),
+                    "correlation": round(r, 4),
+                })
+
+    # 2. Kruskal's Algorithm for Maximum Spanning Forest (MST backbone)
+    sorted_edges = sorted(raw_edges, key=lambda e: float(e["weight"]), reverse=True)
+    dsu_mst = DisjointSetUnion(cols)
+    edges: List[Dict[str, Union[str, float, bool]]] = []
+    for edge in sorted_edges:
+        u = str(edge["source"])
+        v = str(edge["target"])
+        is_mst = dsu_mst.union(u, v)
+        edges.append({
+            "source": u,
+            "target": v,
+            "weight": edge["weight"],
+            "correlation": edge["correlation"],
+            "is_mst_backbone": is_mst,
+        })
+
+    # 3. Connected Components clustering via DSU
+    dsu_components = DisjointSetUnion(cols)
+    for edge in raw_edges:
+        dsu_components.union(str(edge["source"]), str(edge["target"]))
+
+    component_roots = sorted(list({dsu_components.find(c) for c in cols}))
+    root_to_comm: Dict[str, int] = {r: idx for idx, r in enumerate(component_roots)}
+
+    # 4. Degree Centrality and Weighted Node Strength
+    degrees: Dict[str, int] = {c: 0 for c in cols}
+    strengths: Dict[str, float] = {c: 0.0 for c in cols}
+    for edge in raw_edges:
+        u = str(edge["source"])
+        v = str(edge["target"])
+        w = float(edge["weight"])
+        degrees[u] += 1
+        degrees[v] += 1
+        strengths[u] += w
+        strengths[v] += w
+
+    # 5. Deterministic Circular & Spring Embedding Coordinates
+    pos_x: Dict[str, float] = {}
+    pos_y: Dict[str, float] = {}
+    for idx, c in enumerate(cols):
+        theta = (2.0 * math.pi * idx / num_nodes) - (math.pi / 2.0)
+        pos_x[c] = round(math.cos(theta), 4)
+        pos_y[c] = round(math.sin(theta), 4)
+
+    # 25 iterations of spring force relaxation
+    k_repulse = 0.08
+    k_attract = 0.15
+    dt = 0.1
+    for _ in range(25):
+        disp_x: Dict[str, float] = {c: 0.0 for c in cols}
+        disp_y: Dict[str, float] = {c: 0.0 for c in cols}
+
+        for i in range(num_nodes):
+            u = cols[i]
+            for j in range(i + 1, num_nodes):
+                v = cols[j]
+                dx = pos_x[u] - pos_x[v]
+                dy = pos_y[u] - pos_y[v]
+                dist = math.sqrt(dx * dx + dy * dy) + 1e-4
+                force = k_repulse / (dist * dist)
+                disp_x[u] += (dx / dist) * force
+                disp_y[u] += (dy / dist) * force
+                disp_x[v] -= (dx / dist) * force
+                disp_y[v] -= (dy / dist) * force
+
+        for edge in raw_edges:
+            u = str(edge["source"])
+            v = str(edge["target"])
+            w = float(edge["weight"])
+            dx = pos_x[v] - pos_x[u]
+            dy = pos_y[v] - pos_y[u]
+            dist = math.sqrt(dx * dx + dy * dy)
+            force = k_attract * dist * w
+            disp_x[u] += dx * force
+            disp_y[u] += dy * force
+            disp_x[v] -= dx * force
+            disp_y[v] -= dy * force
+
+        for c in cols:
+            pos_x[c] += disp_x[c] * dt
+            pos_y[c] += disp_y[c] * dt
+
+    max_radius = max(math.sqrt(pos_x[c] ** 2 + pos_y[c] ** 2) for c in cols)
+    if max_radius < 1e-5:
+        max_radius = 1.0
+
+    nodes: List[Dict[str, Union[str, int, float]]] = []
+    for c in cols:
+        deg = degrees[c]
+        deg_cent = round(deg / (num_nodes - 1), 4) if num_nodes > 1 else 0.0
+        comm_id = root_to_comm[dsu_components.find(c)]
+        norm_x = round(pos_x[c] / max_radius, 4)
+        norm_y = round(pos_y[c] / max_radius, 4)
+        nodes.append({
+            "id": c,
+            "degree": deg,
+            "degree_centrality": deg_cent,
+            "strength": round(strengths[c], 4),
+            "community_id": comm_id,
+            "x": norm_x,
+            "y": norm_y,
+        })
+
+    total_edges = len(edges)
+    possible_edges = (num_nodes * (num_nodes - 1)) / 2.0
+    density = round(total_edges / possible_edges, 4) if possible_edges > 0 else 0.0
+    isolated = [c for c in cols if degrees[c] == 0]
+    avg_deg = sum(degrees.values()) / num_nodes if num_nodes > 0 else 0.0
+    hubs = sorted(
+        [c for c in cols if degrees[c] >= avg_deg and degrees[c] > 0],
+        key=lambda c: degrees[c],
+        reverse=True,
+    )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "metrics": {
+            "total_nodes": num_nodes,
+            "total_edges": total_edges,
+            "density": density,
+            "num_connected_components": len(component_roots),
+            "isolated_nodes": isolated,
+            "hub_nodes": hubs,
+        },
+        "threshold": threshold,
+    }
+
+
+class HeuristicRule:
+    """
+    Declarative representation of an interpretable domain rule or heuristic constraint.
+    """
+
+    def __init__(
+        self,
+        rule_id: str,
+        name: str,
+        description: str,
+        severity: float,
+        rule_type: str,
+        features: List[str],
+        predicate: Callable[[pd.DataFrame], pd.Series],
+    ) -> None:
+        if not (0.0 <= severity <= 1.0):
+            raise ValueError(f"Rule severity must be between 0.0 and 1.0, got {severity}")
+        self.rule_id = rule_id
+        self.name = name
+        self.description = description
+        self.severity = round(float(severity), 2)
+        self.rule_type = rule_type
+        self.features = features
+        self.predicate = predicate
+
+
+def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
+    """
+    Synthesize domain-grounded heuristic rules automatically from dataset properties:
+    1. Extreme Z-Score tail anomalies (|z| > 3.5)
+    2. Extreme IQR outer fences (Q1 - 3*IQR, Q3 + 3*IQR)
+    3. Cross-feature bivariate coupling violations (diverging from expected linear regression)
+    4. Non-negative domain invariant violations
+    """
+    rules: List[HeuristicRule] = []
+    numeric_df = df.select_dtypes(include=[np.number])
+    cols = [str(c) for c in numeric_df.columns]
+
+    for col in cols:
+        series = numeric_df[col].dropna()
+        if len(series) < 3:
+            continue
+
+        std = float(series.std(ddof=0))
+        mean = float(series.mean())
+
+        # 1. Extreme Z-Score Tail Rule
+        if std > 1e-6:
+            def make_zscore_pred(c: str, m: float, s: float) -> Callable[[pd.DataFrame], pd.Series]:
+                return lambda d: (d[c] - m).abs() / s > 3.5
+
+            rules.append(
+                HeuristicRule(
+                    rule_id=f"R_ZSCORE_{col}",
+                    name=f"Extreme Z-Score ({col})",
+                    description=f"Value deviates > 3.5 standard deviations from mean ({mean:.2f} ± {std:.2f})",
+                    severity=0.80,
+                    rule_type="extreme_tail",
+                    features=[col],
+                    predicate=make_zscore_pred(col, mean, std),
+                )
+            )
+
+        # 2. Extreme IQR Outer Fence Rule
+        q1 = float(series.quantile(0.25))
+        q3 = float(series.quantile(0.75))
+        iqr = q3 - q1
+        if iqr > 1e-6:
+            low_fence = q1 - 3.0 * iqr
+            high_fence = q3 + 3.0 * iqr
+
+            def make_iqr_pred(c: str, lf: float, hf: float) -> Callable[[pd.DataFrame], pd.Series]:
+                return lambda d: (d[c] < lf) | (d[c] > hf)
+
+            rules.append(
+                HeuristicRule(
+                    rule_id=f"R_IQR_{col}",
+                    name=f"Outer IQR Fence ({col})",
+                    description=f"Value falls outside extreme 3.0x IQR fences [{low_fence:.2f}, {high_fence:.2f}]",
+                    severity=0.85,
+                    rule_type="outer_fence",
+                    features=[col],
+                    predicate=make_iqr_pred(col, low_fence, high_fence),
+                )
+            )
+
+        # 3. Non-Negative Domain Invariant Rule
+        if float((series >= 0).mean()) >= 0.98 and float(series.min()) < 0:
+            def make_nonneg_pred(c: str) -> Callable[[pd.DataFrame], pd.Series]:
+                return lambda d: d[c] < 0
+
+            rules.append(
+                HeuristicRule(
+                    rule_id=f"R_NONNEG_{col}",
+                    name=f"Non-Negative Invariant ({col})",
+                    description=f"Value is negative in predominantly non-negative feature {col}",
+                    severity=0.90,
+                    rule_type="domain_invariant",
+                    features=[col],
+                    predicate=make_nonneg_pred(col),
+                )
+            )
+
+    # 4. Cross-Feature Bivariate Coupling Discrepancy Rules
+    if len(cols) >= 2:
+        pearson_matrix = numeric_df.corr(method="pearson").fillna(0.0)
+        spearman_matrix = numeric_df.corr(method="spearman").fillna(0.0)
+        for i in range(len(cols)):
+            col_a = cols[i]
+            for j in range(i + 1, len(cols)):
+                col_b = cols[j]
+                r_p = float(pearson_matrix.loc[col_a, col_b])
+                r_s = float(spearman_matrix.loc[col_a, col_b])
+                r = r_s if abs(r_s) >= abs(r_p) else r_p
+                if abs(r) >= 0.70:
+                    s_a = numeric_df[col_a].dropna()
+                    s_b = numeric_df[col_b].dropna()
+                    mean_a = float(s_a.median())
+                    mean_b = float(s_b.median())
+                    iqr_a = float(s_a.quantile(0.75) - s_a.quantile(0.25))
+                    iqr_b = float(s_b.quantile(0.75) - s_b.quantile(0.25))
+                    std_a = (iqr_a / 1.349) if iqr_a > 1e-6 else float(s_a.std(ddof=0))
+                    std_b = (iqr_b / 1.349) if iqr_b > 1e-6 else float(s_b.std(ddof=0))
+
+                    if std_a > 1e-6 and std_b > 1e-6:
+                        residual_std = math.sqrt(max(1.0 - (r * r), 0.05))
+
+                        def make_coupling_pred(
+                            ca: str, cb: str, ma: float, sa: float, mb: float, sb: float, corr: float, r_std: float
+                        ) -> Callable[[pd.DataFrame], pd.Series]:
+                            return lambda d: (
+                                ((d[ca] - ma) / sa) - corr * ((d[cb] - mb) / sb)
+                            ).abs() / r_std > 3.5
+
+                        rules.append(
+                            HeuristicRule(
+                                rule_id=f"R_COUPLING_{col_a}_{col_b}",
+                                name=f"Coupling Discrepancy ({col_a} vs {col_b})",
+                                description=(
+                                    f"Observed value breaks expected strong correlation (r={r:.2f}) "
+                                    f"between {col_a} and {col_b} by > 3.5 residual standard errors"
+                                ),
+                                severity=0.95,
+                                rule_type="cross_feature_coupling",
+                                features=[col_a, col_b],
+                                predicate=make_coupling_pred(
+                                    col_a, col_b, mean_a, std_a, mean_b, std_b, r, residual_std
+                                ),
+                            )
+                        )
+
+    return rules
+
+
+def evaluate_heuristic_rules(
+    df: pd.DataFrame,
+    rules: Optional[List[HeuristicRule]] = None,
+) -> Dict[str, object]:
+    """
+    Evaluate declarative heuristic domain rules across dataset.
+    Provides explainable anomaly attribution:
+    - Composite anomaly score per record based on weighted rule violations
+    - Rule-by-rule violation diagnostics and attribution
+    - Replaces blackbox IsolationForest with explainable AI evaluation
+    """
+    total_rows = len(df)
+    if total_rows == 0:
+        return {
+            "total_anomalies": 0,
+            "anomaly_percentage": 0.0,
+            "anomalous_indices": [],
+            "total_rules": 0,
+            "rules_evaluated": [],
+            "record_attributions": {},
+            "top_anomalies": [],
+        }
+
+    if rules is None:
+        rules = synthesize_heuristic_rules(df)
+
+    if not rules:
+        return {
+            "total_anomalies": 0,
+            "anomaly_percentage": 0.0,
+            "anomalous_indices": [],
+            "total_rules": 0,
+            "rules_evaluated": [],
+            "record_attributions": {},
+            "top_anomalies": [],
+        }
+
+    total_weight = sum(r.severity for r in rules)
+    row_violations: Dict[int, List[Dict[str, Union[str, float]]]] = {i: [] for i in df.index}
+    rules_summary: List[Dict[str, Union[str, int, float]]] = []
+
+    for rule in rules:
+        try:
+            mask = rule.predicate(df).fillna(False)
+            violating_indices = df.index[mask].tolist()
+            v_count = len(violating_indices)
+            v_pct = round((v_count / total_rows) * 100.0, 2)
+
+            for idx in violating_indices:
+                row_violations[idx].append({
+                    "rule_id": rule.rule_id,
+                    "name": rule.name,
+                    "description": rule.description,
+                    "severity": rule.severity,
+                    "rule_type": rule.rule_type,
+                })
+
+            rules_summary.append({
+                "rule_id": rule.rule_id,
+                "name": rule.name,
+                "description": rule.description,
+                "severity": rule.severity,
+                "rule_type": rule.rule_type,
+                "features": ", ".join(rule.features),
+                "violation_count": v_count,
+                "violation_pct": v_pct,
+            })
+        except Exception:
+            continue
+
+    anomalous_indices: List[int] = []
+    scores: Dict[int, float] = {}
+    top_records: List[Dict[str, object]] = []
+
+    for idx, v_list in row_violations.items():
+        if not v_list:
+            scores[idx] = 0.0
+            continue
+        row_weight = sum(float(v["severity"]) for v in v_list)
+        score = round(row_weight / total_weight, 4) if total_weight > 0 else 0.0
+        scores[idx] = score
+
+        has_severe = any(float(v["severity"]) >= 0.85 for v in v_list)
+        if score >= 0.20 or has_severe:
+            anomalous_indices.append(idx)
+            top_records.append({
+                "index": idx,
+                "composite_score": score,
+                "violated_rules_count": len(v_list),
+                "violations": v_list,
+            })
+
+    top_records.sort(key=lambda r: float(r["composite_score"]), reverse=True)
+    count = len(anomalous_indices)
+    pct = round((count / total_rows) * 100.0, 2)
+
+    return {
+        "total_anomalies": count,
+        "anomaly_percentage": pct,
+        "anomalous_indices": anomalous_indices,
+        "total_rules": len(rules_summary),
+        "rules_evaluated": rules_summary,
+        "record_attributions": {r["index"]: r["violations"] for r in top_records[:50]},
+        "top_anomalies": top_records[:20],
+    }
+
+
+def compute_wasserstein_1d(u: np.ndarray, v: np.ndarray) -> float:
+    """
+    Compute 1D first Wasserstein Distance (Earth Mover's Distance) between two empirical distributions.
+    W_1(u, v) = integral |F_u(t) - F_v(t)| dt
+    Evaluated over uniform quantile discretization grid.
+    """
+    u_clean = u[~np.isnan(u)]
+    v_clean = v[~np.isnan(v)]
+    if len(u_clean) == 0 or len(v_clean) == 0:
+        raise ValueError("Arrays must contain at least one non-null value for Wasserstein computation.")
+
+    q_grid = np.linspace(0.01, 0.99, 100)
+    q_u = np.quantile(u_clean, q_grid)
+    q_v = np.quantile(v_clean, q_grid)
+    w_dist = float(np.mean(np.abs(q_u - q_v)))
+    return round(w_dist, 4)
+
+
+def compute_ks_statistic_1d(u: np.ndarray, v: np.ndarray) -> float:
+    """
+    Compute Kolmogorov-Smirnov statistic D between two empirical distributions.
+    D = sup_x |F_u(x) - F_v(x)| in [0.0, 1.0].
+    """
+    u_clean = u[~np.isnan(u)]
+    v_clean = v[~np.isnan(v)]
+    if len(u_clean) == 0 or len(v_clean) == 0:
+        raise ValueError("Arrays must contain at least one non-null value for KS statistic computation.")
+
+    all_points = np.sort(np.unique(np.concatenate([u_clean, v_clean])))
+    u_sorted = np.sort(u_clean)
+    v_sorted = np.sort(v_clean)
+
+    cdf_u = np.searchsorted(u_sorted, all_points, side="right") / float(len(u_clean))
+    cdf_v = np.searchsorted(v_sorted, all_points, side="right") / float(len(v_clean))
+    d_stat = float(np.max(np.abs(cdf_u - cdf_v)))
+    return round(d_stat, 4)
+
+
+def compute_population_stability_index(
+    observed: np.ndarray,
+    imputed: np.ndarray,
+    bins: int = 10,
+) -> float:
+    """
+    Compute Population Stability Index (PSI) between observed baseline and post-imputation distributions.
+    PSI = sum((P_b - Q_b) * ln(P_b / Q_b))
+    Features epsilon Laplace smoothing to prevent numerical overflow.
+    """
+    obs_clean = observed[~np.isnan(observed)]
+    imp_clean = imputed[~np.isnan(imputed)]
+    if len(obs_clean) == 0 or len(imp_clean) == 0:
+        raise ValueError("Arrays must contain at least one non-null value for PSI computation.")
+    if bins < 2:
+        raise ValueError(f"Number of bins must be >= 2, got {bins}")
+
+    quantiles = np.linspace(0, 100, bins + 1)
+    bin_edges = np.percentile(obs_clean, quantiles)
+    bin_edges = np.unique(bin_edges)
+    if len(bin_edges) < 2:
+        return 0.0
+
+    bin_edges[0] = -np.inf
+    bin_edges[-1] = np.inf
+
+    obs_counts, _ = np.histogram(obs_clean, bins=bin_edges)
+    imp_counts, _ = np.histogram(imp_clean, bins=bin_edges)
+
+    eps = 1e-4
+    p = (obs_counts + eps) / (len(obs_clean) + eps * len(obs_counts))
+    q = (imp_counts + eps) / (len(imp_clean) + eps * len(imp_counts))
+
+    psi = float(np.sum((p - q) * np.log(p / q)))
+    return round(max(psi, 0.0), 4)
+
+
+def benchmark_imputation_drift(
+    df: pd.DataFrame,
+    missing_rate: float = 0.15,
+    seed: int = 42,
+) -> Dict[str, object]:
+    """
+    Empirical benchmark comparing imputation algorithms against statistical data drift metrics:
+    - Wasserstein Distance (Earth Mover's Distance)
+    - Kolmogorov-Smirnov Statistic (D_ks)
+    - Population Stability Index (PSI)
+    - Mean and standard deviation shift
+    Evaluated using controlled Missing Completely At Random (MCAR) injection.
+    """
+    if not (0.01 <= missing_rate <= 0.50):
+        raise ValueError(f"Missing rate must be between 0.01 and 0.50, got {missing_rate}")
+
+    numeric_df = df.select_dtypes(include=[np.number])
+    valid_cols: List[str] = [
+        str(c) for c in numeric_df.columns
+        if numeric_df[c].dropna().nunique() > 2 and len(numeric_df[c].dropna()) >= 10
+    ]
+
+    if not valid_cols:
+        return {
+            "evaluated_features": [],
+            "missing_rate": missing_rate,
+            "optimal_strategy": "mean",
+            "leaderboard": [],
+            "per_feature_results": {},
+        }
+
+    rng = np.random.RandomState(seed)
+    strategies = ["mean", "median", "mode", "zero", "forward_fill", "random_draw"]
+
+    strategy_totals: Dict[str, Dict[str, float]] = {
+        s: {"wasserstein": 0.0, "ks": 0.0, "psi": 0.0, "mean_shift": 0.0, "std_shift": 0.0, "score": 0.0}
+        for s in strategies
+    }
+    per_feature: Dict[str, Dict[str, Dict[str, float]]] = {}
+
+    for col in valid_cols:
+        col_vals = numeric_df[col].dropna().values.astype(float)
+        n = len(col_vals)
+        mask = rng.rand(n) < missing_rate
+
+        # Ensure at least 1 masked and at least 3 observed
+        if mask.sum() == 0:
+            mask[rng.choice(n)] = True
+        if (~mask).sum() < 3:
+            mask = np.zeros(n, dtype=bool)
+            mask[: max(1, int(n * missing_rate))] = True
+
+        y_true = col_vals
+        y_obs = col_vals[~mask]
+        std_true = float(np.std(y_true)) + 1e-6
+        mean_obs = float(np.mean(y_obs))
+        median_obs = float(np.median(y_obs))
+
+        # Mode calculation
+        vals_unique, counts = np.unique(y_obs, return_counts=True)
+        mode_obs = float(vals_unique[np.argmax(counts)])
+
+        per_feature[col] = {}
+
+        for strat in strategies:
+            y_imp = col_vals.copy()
+            if strat == "mean":
+                y_imp[mask] = mean_obs
+            elif strat == "median":
+                y_imp[mask] = median_obs
+            elif strat == "mode":
+                y_imp[mask] = mode_obs
+            elif strat == "zero":
+                y_imp[mask] = 0.0
+            elif strat == "forward_fill":
+                last_val = mean_obs
+                for i in range(n):
+                    if mask[i]:
+                        y_imp[i] = last_val
+                    else:
+                        last_val = y_imp[i]
+            elif strat == "random_draw":
+                y_imp[mask] = rng.choice(y_obs, size=mask.sum(), replace=True)
+
+            w_dist = compute_wasserstein_1d(y_imp, y_true)
+            ks_stat = compute_ks_statistic_1d(y_imp, y_true)
+            psi_val = compute_population_stability_index(y_true, y_imp)
+            m_shift = round(abs(float(np.mean(y_imp) - np.mean(y_true))), 4)
+            s_shift = round(abs(float(np.std(y_imp) - np.std(y_true))), 4)
+
+            # Normalized Composite Drift Score (0.0 to 1.0, lower is better)
+            norm_w = min(w_dist / std_true, 1.0)
+            norm_psi = min(psi_val / 0.25, 1.0)
+            comp_score = round(0.35 * ks_stat + 0.35 * norm_psi + 0.30 * norm_w, 4)
+
+            per_feature[col][strat] = {
+                "wasserstein": w_dist,
+                "ks_statistic": ks_stat,
+                "psi": psi_val,
+                "mean_shift": m_shift,
+                "std_shift": s_shift,
+                "composite_score": comp_score,
+            }
+
+            strategy_totals[strat]["wasserstein"] += w_dist
+            strategy_totals[strat]["ks"] += ks_stat
+            strategy_totals[strat]["psi"] += psi_val
+            strategy_totals[strat]["mean_shift"] += m_shift
+            strategy_totals[strat]["std_shift"] += s_shift
+            strategy_totals[strat]["score"] += comp_score
+
+    # Compute averages across evaluated features
+    num_f = len(valid_cols)
+    leaderboard: List[Dict[str, Union[str, int, float]]] = []
+    for strat in strategies:
+        avg_w = round(strategy_totals[strat]["wasserstein"] / num_f, 4)
+        avg_ks = round(strategy_totals[strat]["ks"] / num_f, 4)
+        avg_psi = round(strategy_totals[strat]["psi"] / num_f, 4)
+        avg_m = round(strategy_totals[strat]["mean_shift"] / num_f, 4)
+        avg_s = round(strategy_totals[strat]["std_shift"] / num_f, 4)
+        avg_score = round(strategy_totals[strat]["score"] / num_f, 4)
+
+        leaderboard.append({
+            "strategy": strat,
+            "composite_drift_score": avg_score,
+            "avg_ks_statistic": avg_ks,
+            "avg_psi": avg_psi,
+            "avg_wasserstein": avg_w,
+            "avg_mean_shift": avg_m,
+            "avg_std_shift": avg_s,
+        })
+
+    leaderboard.sort(key=lambda x: float(x["composite_drift_score"]))
+    for rank, entry in enumerate(leaderboard, start=1):
+        entry["rank"] = rank
+
+    optimal_strategy = str(leaderboard[0]["strategy"]) if leaderboard else "mean"
+
+    return {
+        "evaluated_features": valid_cols,
+        "missing_rate": missing_rate,
+        "optimal_strategy": optimal_strategy,
+        "leaderboard": leaderboard,
+        "per_feature_results": per_feature,
     }
