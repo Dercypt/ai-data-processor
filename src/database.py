@@ -1,7 +1,9 @@
-import streamlit as st
-import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import json
 from datetime import datetime
+from typing import Dict, List, Tuple, Union
+import pandas as pd
+import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 
 # Establish connection
 def get_conn():
@@ -26,7 +28,7 @@ def init_db():
         init_df = pd.DataFrame(columns=["timestamp", "filename", "insights"])
         conn.update(data=init_df)
 
-def save_entry(filename, insights):
+def save_entry(filename: str, insights: Union[str, Dict[str, object]]) -> None:
     """Appends a new entry to the Google Sheet."""
     conn = get_conn()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -34,14 +36,20 @@ def save_entry(filename, insights):
     # 1. Get current data (Fresh read)
     try:
         existing_data = conn.read(ttl=0)
-    except:
+    except Exception:
         existing_data = pd.DataFrame(columns=["timestamp", "filename", "insights"])
+
+    insights_str = (
+        json.dumps(insights)
+        if isinstance(insights, (dict, list))
+        else str(insights)
+    )
 
     # 2. Create new row
     new_entry = pd.DataFrame([{
         "timestamp": timestamp,
         "filename": filename,
-        "insights": insights
+        "insights": insights_str
     }])
     
     # 3. Combine and Update
