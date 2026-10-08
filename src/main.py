@@ -1,9 +1,10 @@
+import json
 import streamlit as st
 import time
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from analyzer import (
     analyze_dataset,
@@ -24,6 +25,32 @@ st.title("AI Data Processor")
 if "generated_insight" not in st.session_state:
     st.session_state["generated_insight"] = None
 
+
+def render_sidebar_insights(insights: str) -> None:
+    """Render structured insights or fallback text inside the sidebar expander."""
+    try:
+        data = json.loads(insights)
+        if isinstance(data, dict):
+            summary = data.get("summary")
+            risks = data.get("risks")
+            recommendations = data.get("recommendations")
+
+            if summary:
+                st.markdown(f"**Summary:** {summary}")
+            if isinstance(risks, list) and risks:
+                st.markdown("**Risks:**")
+                for r in risks:
+                    st.markdown(f"- {r}")
+            if isinstance(recommendations, list) and recommendations:
+                st.markdown("**Recommendations:**")
+                for rec in recommendations:
+                    st.markdown(f"- {rec}")
+            return
+    except (json.JSONDecodeError, TypeError):
+        pass
+    st.info(insights)
+
+
 # --- SIDEBAR: HISTORY & MANAGEMENT ---
 st.sidebar.title("Analysis History")
 
@@ -38,7 +65,7 @@ else:
         
         with st.sidebar.expander(label):
             st.caption(f"Date: {timestamp[:10]}")
-            st.info(insights)
+            render_sidebar_insights(str(insights))
             
             # The Delete Button
             if st.button("🗑️ Delete", key=f"del_{entry_id}"):
@@ -362,6 +389,45 @@ def render_preprocessing_pipeline(
         return processed_df, summary
 
 
+def render_structured_insights(insights: Union[Dict[str, object], str]) -> None:
+    """Render structured AI insights (summary, risks, recommendations) with Streamlit components."""
+    data: Dict[str, object] = {}
+    if isinstance(insights, str):
+        try:
+            parsed = json.loads(insights)
+            if isinstance(parsed, dict):
+                data = parsed
+            else:
+                st.write(insights)
+                return
+        except (json.JSONDecodeError, TypeError):
+            st.write(insights)
+            return
+    elif isinstance(insights, dict):
+        data = insights
+    else:
+        st.write(insights)
+        return
+
+    summary = data.get("summary")
+    risks = data.get("risks")
+    recommendations = data.get("recommendations")
+
+    if summary:
+        st.markdown("#### 📋 Executive Summary")
+        st.info(str(summary))
+
+    if isinstance(risks, list) and risks:
+        st.markdown("#### ⚠️ Key Risks & Anomalies")
+        for risk in risks:
+            st.warning(f"• {risk}")
+
+    if isinstance(recommendations, list) and recommendations:
+        st.markdown("#### 💡 Strategic Recommendations")
+        for rec in recommendations:
+            st.success(f"• {rec}")
+
+
 # --- MAIN APP: UPLOAD & ANALYZE ---
 
 file = st.file_uploader("Upload CSV", type="csv")
@@ -438,18 +504,20 @@ if file:
                         "kurtosis": summary.get("kurtosis", {}),
                         "correlation": summary.get("correlation", {}),
                     }
-                    insights = get_ai_insights(ai_payload)
+                    try:
+                        insights = get_ai_insights(ai_payload)
+                        st.session_state["generated_insight"] = insights
 
-                    st.session_state["generated_insight"] = insights
+                        save_entry(custom_title, insights)
+                        st.success("Saved to History!")
 
-                    save_entry(custom_title, insights)
-                    st.success("Saved to History!")
-
-                    time.sleep(0.5)
-                    st.rerun()
+                        time.sleep(0.5)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to generate structured insights: {e}")
 
     # --- DISPLAY RESULTS (Outside the button) ---
     if st.session_state["generated_insight"]:
         st.divider()
         st.write("### 🤖 Generated Insights")
-        st.write(st.session_state["generated_insight"])
+        render_structured_insights(st.session_state["generated_insight"])
