@@ -1,8 +1,9 @@
 import io
+import math
 import os
 import time
 import tracemalloc
-from typing import Dict, Generator, List, Optional, Tuple, Union
+from typing import Callable, Dict, Generator, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -413,6 +414,7 @@ def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
     iqr_outliers = detect_outliers_iqr(df)
     zscore_outliers = detect_outliers_zscore(df)
     iso_outliers = detect_outliers_isolation_forest(df)
+    dependency_graph = build_feature_dependency_graph(df)
 
     summary: Dict[str, object] = {
         "columns": list(df.columns),
@@ -429,6 +431,7 @@ def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
             "zscore": zscore_outliers,
             "isolation_forest": iso_outliers,
         },
+        "dependency_graph": dependency_graph,
     }
     return summary
 
@@ -723,4 +726,233 @@ def evaluate_memory_footprint(
         "best_streaming_chunk_size": best_streaming_chunk_size,
         "max_memory_reduction_pct": max_memory_reduction_pct,
         "evaluations": results,
+    }
+
+
+class DisjointSetUnion:
+    """
+    Disjoint Set Union (DSU / Union-Find) data structure with path compression
+    and union-by-rank heuristics for O(alpha(V)) disjoint component tracking.
+    """
+
+    def __init__(self, elements: List[str]) -> None:
+        self.parent: Dict[str, str] = {e: e for e in elements}
+        self.rank: Dict[str, int] = {e: 0 for e in elements}
+
+    def find(self, item: str) -> str:
+        root = item
+        while self.parent[root] != root:
+            root = self.parent[root]
+        curr = item
+        while curr != root:
+            nxt = self.parent[curr]
+            self.parent[curr] = root
+            curr = nxt
+        return root
+
+    def union(self, item_a: str, item_b: str) -> bool:
+        root_a = self.find(item_a)
+        root_b = self.find(item_b)
+        if root_a == root_b:
+            return False
+        if self.rank[root_a] < self.rank[root_b]:
+            self.parent[root_a] = root_b
+        elif self.rank[root_a] > self.rank[root_b]:
+            self.parent[root_b] = root_a
+        else:
+            self.parent[root_b] = root_a
+            self.rank[root_a] += 1
+        return True
+
+
+def build_feature_dependency_graph(
+    df: pd.DataFrame,
+    threshold: float = 0.3,
+) -> Dict[str, object]:
+    """
+    Construct an automated feature correlation dependency network graph.
+    Computes graph theoretical topological metrics:
+    - Degree and weighted strength centrality per feature
+    - Connected component clustering via Disjoint Set Union (DSU)
+    - Maximum Spanning Tree (MST) dependency backbone via Kruskal's algorithm
+    - Deterministic 2D planar coordinates via spring embedding relaxation
+    """
+    if not (0.0 <= threshold <= 1.0):
+        raise ValueError(f"Correlation threshold must be between 0.0 and 1.0, got {threshold}")
+
+    numeric_df = df.select_dtypes(include=[np.number])
+    cols: List[str] = [str(c) for c in numeric_df.columns]
+    num_nodes = len(cols)
+
+    if num_nodes < 2:
+        empty_nodes: List[Dict[str, Union[str, int, float]]] = [
+            {
+                "id": c,
+                "degree": 0,
+                "degree_centrality": 0.0,
+                "strength": 0.0,
+                "community_id": 0,
+                "x": 0.0,
+                "y": 0.0,
+            }
+            for c in cols
+        ]
+        return {
+            "nodes": empty_nodes,
+            "edges": [],
+            "metrics": {
+                "total_nodes": num_nodes,
+                "total_edges": 0,
+                "density": 0.0,
+                "num_connected_components": num_nodes,
+                "isolated_nodes": cols,
+                "hub_nodes": [],
+            },
+            "threshold": threshold,
+        }
+
+    corr_matrix = numeric_df.corr(method="pearson").fillna(0.0)
+
+    # 1. Collect candidate undirected edges meeting threshold
+    raw_edges: List[Dict[str, Union[str, float]]] = []
+    for i in range(num_nodes):
+        u = cols[i]
+        for j in range(i + 1, num_nodes):
+            v = cols[j]
+            r = float(corr_matrix.loc[u, v])
+            weight = abs(r)
+            if weight >= threshold:
+                raw_edges.append({
+                    "source": u,
+                    "target": v,
+                    "weight": round(weight, 4),
+                    "correlation": round(r, 4),
+                })
+
+    # 2. Kruskal's Algorithm for Maximum Spanning Forest (MST backbone)
+    sorted_edges = sorted(raw_edges, key=lambda e: float(e["weight"]), reverse=True)
+    dsu_mst = DisjointSetUnion(cols)
+    edges: List[Dict[str, Union[str, float, bool]]] = []
+    for edge in sorted_edges:
+        u = str(edge["source"])
+        v = str(edge["target"])
+        is_mst = dsu_mst.union(u, v)
+        edges.append({
+            "source": u,
+            "target": v,
+            "weight": edge["weight"],
+            "correlation": edge["correlation"],
+            "is_mst_backbone": is_mst,
+        })
+
+    # 3. Connected Components clustering via DSU
+    dsu_components = DisjointSetUnion(cols)
+    for edge in raw_edges:
+        dsu_components.union(str(edge["source"]), str(edge["target"]))
+
+    component_roots = sorted(list({dsu_components.find(c) for c in cols}))
+    root_to_comm: Dict[str, int] = {r: idx for idx, r in enumerate(component_roots)}
+
+    # 4. Degree Centrality and Weighted Node Strength
+    degrees: Dict[str, int] = {c: 0 for c in cols}
+    strengths: Dict[str, float] = {c: 0.0 for c in cols}
+    for edge in raw_edges:
+        u = str(edge["source"])
+        v = str(edge["target"])
+        w = float(edge["weight"])
+        degrees[u] += 1
+        degrees[v] += 1
+        strengths[u] += w
+        strengths[v] += w
+
+    # 5. Deterministic Circular & Spring Embedding Coordinates
+    pos_x: Dict[str, float] = {}
+    pos_y: Dict[str, float] = {}
+    for idx, c in enumerate(cols):
+        theta = (2.0 * math.pi * idx / num_nodes) - (math.pi / 2.0)
+        pos_x[c] = round(math.cos(theta), 4)
+        pos_y[c] = round(math.sin(theta), 4)
+
+    # 25 iterations of spring force relaxation
+    k_repulse = 0.08
+    k_attract = 0.15
+    dt = 0.1
+    for _ in range(25):
+        disp_x: Dict[str, float] = {c: 0.0 for c in cols}
+        disp_y: Dict[str, float] = {c: 0.0 for c in cols}
+
+        for i in range(num_nodes):
+            u = cols[i]
+            for j in range(i + 1, num_nodes):
+                v = cols[j]
+                dx = pos_x[u] - pos_x[v]
+                dy = pos_y[u] - pos_y[v]
+                dist = math.sqrt(dx * dx + dy * dy) + 1e-4
+                force = k_repulse / (dist * dist)
+                disp_x[u] += (dx / dist) * force
+                disp_y[u] += (dy / dist) * force
+                disp_x[v] -= (dx / dist) * force
+                disp_y[v] -= (dy / dist) * force
+
+        for edge in raw_edges:
+            u = str(edge["source"])
+            v = str(edge["target"])
+            w = float(edge["weight"])
+            dx = pos_x[v] - pos_x[u]
+            dy = pos_y[v] - pos_y[u]
+            dist = math.sqrt(dx * dx + dy * dy)
+            force = k_attract * dist * w
+            disp_x[u] += dx * force
+            disp_y[u] += dy * force
+            disp_x[v] -= dx * force
+            disp_y[v] -= dy * force
+
+        for c in cols:
+            pos_x[c] += disp_x[c] * dt
+            pos_y[c] += disp_y[c] * dt
+
+    max_radius = max(math.sqrt(pos_x[c] ** 2 + pos_y[c] ** 2) for c in cols)
+    if max_radius < 1e-5:
+        max_radius = 1.0
+
+    nodes: List[Dict[str, Union[str, int, float]]] = []
+    for c in cols:
+        deg = degrees[c]
+        deg_cent = round(deg / (num_nodes - 1), 4) if num_nodes > 1 else 0.0
+        comm_id = root_to_comm[dsu_components.find(c)]
+        norm_x = round(pos_x[c] / max_radius, 4)
+        norm_y = round(pos_y[c] / max_radius, 4)
+        nodes.append({
+            "id": c,
+            "degree": deg,
+            "degree_centrality": deg_cent,
+            "strength": round(strengths[c], 4),
+            "community_id": comm_id,
+            "x": norm_x,
+            "y": norm_y,
+        })
+
+    total_edges = len(edges)
+    possible_edges = (num_nodes * (num_nodes - 1)) / 2.0
+    density = round(total_edges / possible_edges, 4) if possible_edges > 0 else 0.0
+    isolated = [c for c in cols if degrees[c] == 0]
+    avg_deg = sum(degrees.values()) / num_nodes if num_nodes > 0 else 0.0
+    hubs = sorted(
+        [c for c in cols if degrees[c] >= avg_deg and degrees[c] > 0],
+        key=lambda c: degrees[c],
+        reverse=True,
+    )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "metrics": {
+            "total_nodes": num_nodes,
+            "total_edges": total_edges,
+            "density": density,
+            "num_connected_components": len(component_roots),
+            "isolated_nodes": isolated,
+            "hub_nodes": hubs,
+        },
+        "threshold": threshold,
     }
