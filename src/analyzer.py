@@ -416,6 +416,7 @@ def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
     iso_outliers = detect_outliers_isolation_forest(df)
     dependency_graph = build_feature_dependency_graph(df)
     heuristic_anomalies = evaluate_heuristic_rules(df)
+    imputation_drift = benchmark_imputation_drift(df)
 
     summary: Dict[str, object] = {
         "columns": list(df.columns),
@@ -435,6 +436,7 @@ def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
         },
         "dependency_graph": dependency_graph,
         "heuristic_rules": heuristic_anomalies,
+        "imputation_drift": imputation_drift,
     }
     return summary
 
@@ -1212,4 +1214,226 @@ def evaluate_heuristic_rules(
         "rules_evaluated": rules_summary,
         "record_attributions": {r["index"]: r["violations"] for r in top_records[:50]},
         "top_anomalies": top_records[:20],
+    }
+
+
+def compute_wasserstein_1d(u: np.ndarray, v: np.ndarray) -> float:
+    """
+    Compute 1D first Wasserstein Distance (Earth Mover's Distance) between two empirical distributions.
+    W_1(u, v) = integral |F_u(t) - F_v(t)| dt
+    Evaluated over uniform quantile discretization grid.
+    """
+    u_clean = u[~np.isnan(u)]
+    v_clean = v[~np.isnan(v)]
+    if len(u_clean) == 0 or len(v_clean) == 0:
+        raise ValueError("Arrays must contain at least one non-null value for Wasserstein computation.")
+
+    q_grid = np.linspace(0.01, 0.99, 100)
+    q_u = np.quantile(u_clean, q_grid)
+    q_v = np.quantile(v_clean, q_grid)
+    w_dist = float(np.mean(np.abs(q_u - q_v)))
+    return round(w_dist, 4)
+
+
+def compute_ks_statistic_1d(u: np.ndarray, v: np.ndarray) -> float:
+    """
+    Compute Kolmogorov-Smirnov statistic D between two empirical distributions.
+    D = sup_x |F_u(x) - F_v(x)| in [0.0, 1.0].
+    """
+    u_clean = u[~np.isnan(u)]
+    v_clean = v[~np.isnan(v)]
+    if len(u_clean) == 0 or len(v_clean) == 0:
+        raise ValueError("Arrays must contain at least one non-null value for KS statistic computation.")
+
+    all_points = np.sort(np.unique(np.concatenate([u_clean, v_clean])))
+    u_sorted = np.sort(u_clean)
+    v_sorted = np.sort(v_clean)
+
+    cdf_u = np.searchsorted(u_sorted, all_points, side="right") / float(len(u_clean))
+    cdf_v = np.searchsorted(v_sorted, all_points, side="right") / float(len(v_clean))
+    d_stat = float(np.max(np.abs(cdf_u - cdf_v)))
+    return round(d_stat, 4)
+
+
+def compute_population_stability_index(
+    observed: np.ndarray,
+    imputed: np.ndarray,
+    bins: int = 10,
+) -> float:
+    """
+    Compute Population Stability Index (PSI) between observed baseline and post-imputation distributions.
+    PSI = sum((P_b - Q_b) * ln(P_b / Q_b))
+    Features epsilon Laplace smoothing to prevent numerical overflow.
+    """
+    obs_clean = observed[~np.isnan(observed)]
+    imp_clean = imputed[~np.isnan(imputed)]
+    if len(obs_clean) == 0 or len(imp_clean) == 0:
+        raise ValueError("Arrays must contain at least one non-null value for PSI computation.")
+    if bins < 2:
+        raise ValueError(f"Number of bins must be >= 2, got {bins}")
+
+    quantiles = np.linspace(0, 100, bins + 1)
+    bin_edges = np.percentile(obs_clean, quantiles)
+    bin_edges = np.unique(bin_edges)
+    if len(bin_edges) < 2:
+        return 0.0
+
+    bin_edges[0] = -np.inf
+    bin_edges[-1] = np.inf
+
+    obs_counts, _ = np.histogram(obs_clean, bins=bin_edges)
+    imp_counts, _ = np.histogram(imp_clean, bins=bin_edges)
+
+    eps = 1e-4
+    p = (obs_counts + eps) / (len(obs_clean) + eps * len(obs_counts))
+    q = (imp_counts + eps) / (len(imp_clean) + eps * len(imp_counts))
+
+    psi = float(np.sum((p - q) * np.log(p / q)))
+    return round(max(psi, 0.0), 4)
+
+
+def benchmark_imputation_drift(
+    df: pd.DataFrame,
+    missing_rate: float = 0.15,
+    seed: int = 42,
+) -> Dict[str, object]:
+    """
+    Empirical benchmark comparing imputation algorithms against statistical data drift metrics:
+    - Wasserstein Distance (Earth Mover's Distance)
+    - Kolmogorov-Smirnov Statistic (D_ks)
+    - Population Stability Index (PSI)
+    - Mean and standard deviation shift
+    Evaluated using controlled Missing Completely At Random (MCAR) injection.
+    """
+    if not (0.01 <= missing_rate <= 0.50):
+        raise ValueError(f"Missing rate must be between 0.01 and 0.50, got {missing_rate}")
+
+    numeric_df = df.select_dtypes(include=[np.number])
+    valid_cols: List[str] = [
+        str(c) for c in numeric_df.columns
+        if numeric_df[c].dropna().nunique() > 2 and len(numeric_df[c].dropna()) >= 10
+    ]
+
+    if not valid_cols:
+        return {
+            "evaluated_features": [],
+            "missing_rate": missing_rate,
+            "optimal_strategy": "mean",
+            "leaderboard": [],
+            "per_feature_results": {},
+        }
+
+    rng = np.random.RandomState(seed)
+    strategies = ["mean", "median", "mode", "zero", "forward_fill", "random_draw"]
+
+    strategy_totals: Dict[str, Dict[str, float]] = {
+        s: {"wasserstein": 0.0, "ks": 0.0, "psi": 0.0, "mean_shift": 0.0, "std_shift": 0.0, "score": 0.0}
+        for s in strategies
+    }
+    per_feature: Dict[str, Dict[str, Dict[str, float]]] = {}
+
+    for col in valid_cols:
+        col_vals = numeric_df[col].dropna().values.astype(float)
+        n = len(col_vals)
+        mask = rng.rand(n) < missing_rate
+
+        # Ensure at least 1 masked and at least 3 observed
+        if mask.sum() == 0:
+            mask[rng.choice(n)] = True
+        if (~mask).sum() < 3:
+            mask = np.zeros(n, dtype=bool)
+            mask[: max(1, int(n * missing_rate))] = True
+
+        y_true = col_vals
+        y_obs = col_vals[~mask]
+        std_true = float(np.std(y_true)) + 1e-6
+        mean_obs = float(np.mean(y_obs))
+        median_obs = float(np.median(y_obs))
+
+        # Mode calculation
+        vals_unique, counts = np.unique(y_obs, return_counts=True)
+        mode_obs = float(vals_unique[np.argmax(counts)])
+
+        per_feature[col] = {}
+
+        for strat in strategies:
+            y_imp = col_vals.copy()
+            if strat == "mean":
+                y_imp[mask] = mean_obs
+            elif strat == "median":
+                y_imp[mask] = median_obs
+            elif strat == "mode":
+                y_imp[mask] = mode_obs
+            elif strat == "zero":
+                y_imp[mask] = 0.0
+            elif strat == "forward_fill":
+                last_val = mean_obs
+                for i in range(n):
+                    if mask[i]:
+                        y_imp[i] = last_val
+                    else:
+                        last_val = y_imp[i]
+            elif strat == "random_draw":
+                y_imp[mask] = rng.choice(y_obs, size=mask.sum(), replace=True)
+
+            w_dist = compute_wasserstein_1d(y_imp, y_true)
+            ks_stat = compute_ks_statistic_1d(y_imp, y_true)
+            psi_val = compute_population_stability_index(y_true, y_imp)
+            m_shift = round(abs(float(np.mean(y_imp) - np.mean(y_true))), 4)
+            s_shift = round(abs(float(np.std(y_imp) - np.std(y_true))), 4)
+
+            # Normalized Composite Drift Score (0.0 to 1.0, lower is better)
+            norm_w = min(w_dist / std_true, 1.0)
+            norm_psi = min(psi_val / 0.25, 1.0)
+            comp_score = round(0.35 * ks_stat + 0.35 * norm_psi + 0.30 * norm_w, 4)
+
+            per_feature[col][strat] = {
+                "wasserstein": w_dist,
+                "ks_statistic": ks_stat,
+                "psi": psi_val,
+                "mean_shift": m_shift,
+                "std_shift": s_shift,
+                "composite_score": comp_score,
+            }
+
+            strategy_totals[strat]["wasserstein"] += w_dist
+            strategy_totals[strat]["ks"] += ks_stat
+            strategy_totals[strat]["psi"] += psi_val
+            strategy_totals[strat]["mean_shift"] += m_shift
+            strategy_totals[strat]["std_shift"] += s_shift
+            strategy_totals[strat]["score"] += comp_score
+
+    # Compute averages across evaluated features
+    num_f = len(valid_cols)
+    leaderboard: List[Dict[str, Union[str, int, float]]] = []
+    for strat in strategies:
+        avg_w = round(strategy_totals[strat]["wasserstein"] / num_f, 4)
+        avg_ks = round(strategy_totals[strat]["ks"] / num_f, 4)
+        avg_psi = round(strategy_totals[strat]["psi"] / num_f, 4)
+        avg_m = round(strategy_totals[strat]["mean_shift"] / num_f, 4)
+        avg_s = round(strategy_totals[strat]["std_shift"] / num_f, 4)
+        avg_score = round(strategy_totals[strat]["score"] / num_f, 4)
+
+        leaderboard.append({
+            "strategy": strat,
+            "composite_drift_score": avg_score,
+            "avg_ks_statistic": avg_ks,
+            "avg_psi": avg_psi,
+            "avg_wasserstein": avg_w,
+            "avg_mean_shift": avg_m,
+            "avg_std_shift": avg_s,
+        })
+
+    leaderboard.sort(key=lambda x: float(x["composite_drift_score"]))
+    for rank, entry in enumerate(leaderboard, start=1):
+        entry["rank"] = rank
+
+    optimal_strategy = str(leaderboard[0]["strategy"]) if leaderboard else "mean"
+
+    return {
+        "evaluated_features": valid_cols,
+        "missing_rate": missing_rate,
+        "optimal_strategy": optimal_strategy,
+        "leaderboard": leaderboard,
+        "per_feature_results": per_feature,
     }
