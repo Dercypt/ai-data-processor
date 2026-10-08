@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import sys
 
@@ -186,6 +187,47 @@ class TestDatabasePersistence(unittest.TestCase):
         conn = get_conn(self.db_path)
         self.assertIsInstance(conn, sqlite3.Connection)
         conn.close()
+
+    def test_connection_pragmas_wal_and_synchronous(self):
+        with get_connection(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA foreign_keys;")
+            self.assertEqual(cursor.fetchone()[0], 1)
+
+            cursor.execute("PRAGMA journal_mode;")
+            self.assertEqual(str(cursor.fetchone()[0]).lower(), "wal")
+
+            cursor.execute("PRAGMA synchronous;")
+            # SQLite returns 1 for NORMAL synchronous mode
+            self.assertEqual(cursor.fetchone()[0], 1)
+
+    def test_concurrent_multi_analyst_writes_under_wal(self):
+        # Verify simultaneous writes by multiple analysts do not raise database locked errors
+        num_analysts = 10
+        num_writes_per_analyst = 3
+
+        def analyst_work(analyst_idx: int) -> None:
+            user_id = create_user(
+                f"analyst_worker_{analyst_idx}",
+                f"SecretPassword{analyst_idx}!",
+                db_path=self.db_path,
+            )
+            for write_idx in range(num_writes_per_analyst):
+                save_entry(
+                    f"dataset_analyst_{analyst_idx}_{write_idx}.csv",
+                    {"analyst": analyst_idx, "write": write_idx},
+                    user_id=user_id,
+                    db_path=self.db_path,
+                )
+
+        with ThreadPoolExecutor(max_workers=num_analysts) as executor:
+            futures = [executor.submit(analyst_work, i) for i in range(num_analysts)]
+            for future in futures:
+                future.result()
+
+        entries = get_all_entries(db_path=self.db_path)
+        expected_total = num_analysts * num_writes_per_analyst
+        self.assertEqual(len(entries), expected_total)
 
 
 if __name__ == "__main__":
