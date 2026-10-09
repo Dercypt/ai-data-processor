@@ -229,6 +229,15 @@ class TestDatabasePersistence(unittest.TestCase):
         expected_total = num_analysts * num_writes_per_analyst
         self.assertEqual(len(entries), expected_total)
 
+    def test_database_has_zero_streamlit_dependency(self):
+        import database
+        self.assertFalse(hasattr(database, "st"))
+        with open(database.__file__, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertNotIn("streamlit", content)
+        self.assertNotIn("session_state", content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
