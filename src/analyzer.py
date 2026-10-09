@@ -460,8 +460,14 @@ def read_csv_chunked(
     chunksize: int = DEFAULT_CHUNKSIZE,
 ) -> pd.DataFrame:
     """
-    Ingest CSV tabular data in bounded chunksize slices rather than monolithic O(N) allocation.
+    Parse CSV tabular data in batch chunks and reassemble into a single DataFrame.
     Preserves full row count and column schemas.
+
+    Note on memory complexity:
+    Reassembling chunks into a single pd.DataFrame requires O(N) memory allocation
+    for the complete dataset. For strictly bounded O(C) memory consumption where
+    the full dataset is never held in memory at once, use stream_clean_dataset()
+    or stream_clean_to_csv() instead.
     """
     if file is None:
         raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
@@ -528,29 +534,35 @@ def load_and_clean_chunked(
     chunksize: Optional[int] = DEFAULT_CHUNKSIZE,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
-    Load and clean a tabular dataset using chunked processing.
-    Eliminates missing values without dropping rows or columns (Law 2).
-    Returns (cleaned_df, detected_column_types).
+    Load and clean a tabular dataset using iterative chunked processing.
+    Eliminates missing values chunk-by-chunk without dropping rows or columns (Law 2).
+    Reassembles cleaned chunks into a full DataFrame for downstream in-memory analysis (O(N) memory).
+
+    Returns:
+        Tuple of (cleaned_df, detected_column_types).
     """
     if file is None:
         raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
 
     if chunksize is not None and chunksize > 0:
-        df = read_csv_chunked(file, chunksize=chunksize)
+        cleaned_chunks: List[pd.DataFrame] = []
+        for cleaned_chunk in stream_clean_dataset(file, chunksize=chunksize):
+            cleaned_chunks.append(cleaned_chunk)
+
+        if not cleaned_chunks:
+            raise ValueError("The uploaded CSV file is empty.")
+
+        df = pd.concat(cleaned_chunks, ignore_index=True)
     else:
         df = pd.read_csv(file)
+        if df.empty:
+            raise ValueError("The uploaded CSV file is empty.")
+        df = clean_chunk(df)
 
     if df.empty:
         raise ValueError("The uploaded CSV file is empty.")
 
     col_types = detect_column_types(df)
-
-    for col in df.columns:
-        if pd.api.types.is_numeric_dtype(df[col]):
-            df[col] = df[col].fillna(0)
-        else:
-            df[col] = df[col].fillna("Unknown")
-
     return df, col_types
 
 
@@ -560,8 +572,13 @@ def analyze_dataset(
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
     """
     Ingest, clean, and compute comprehensive statistical data science summaries.
-    Supports memory-efficient chunked ingestion via `chunksize`.
+    Supports chunked ingestion batching via `chunksize`.
     Adheres strictly to Law 2 (cleaning integrity) and Law 3 (return contract).
+
+    Note on memory complexity:
+    The analysis phase and return contract require the full DataFrame in memory (O(N))
+    to compute global statistics and enable downstream visualization. For bounded
+    O(C) memory operations, use stream_clean_to_csv().
     """
     try:
         df, col_types = load_and_clean_chunked(file, chunksize=chunksize)
@@ -631,7 +648,7 @@ def evaluate_memory_footprint(
 ) -> Dict[str, object]:
     """
     Empirically evaluate and compare memory footprints and execution latency across chunk sizes.
-    Demonstrates O(N) monolithic space complexity vs O(C) bounded chunked streaming.
+    Demonstrates O(N) monolithic space complexity vs O(C) bounded chunked streaming cleaning.
     Utilizes Python standard library tracemalloc for deterministic heap tracking.
     """
     if chunk_sizes is None:

@@ -120,6 +120,25 @@ class TestChunkedProcessing(unittest.TestCase):
         self.assertIn("num_feat", col_types)
         self.assertEqual(col_types["num_feat"], "continuous")
 
+    def test_load_and_clean_chunked_none_chunksize(self) -> None:
+        """load_and_clean_chunked with chunksize=None cleans dataset identically."""
+        stream_chunked = self._get_stream()
+        df_chunked, types_chunked = load_and_clean_chunked(stream_chunked, chunksize=30)
+
+        stream_unchunked = self._get_stream()
+        df_unchunked, types_unchunked = load_and_clean_chunked(stream_unchunked, chunksize=None)
+
+        self.assertEqual(len(df_chunked), len(df_unchunked))
+        self.assertEqual(types_chunked, types_unchunked)
+        pd.testing.assert_frame_equal(df_chunked, df_unchunked)
+
+    def test_load_and_clean_chunked_invalid_arguments(self) -> None:
+        """load_and_clean_chunked raises ValueError on None or empty input."""
+        with self.assertRaises(ValueError):
+            load_and_clean_chunked(None)
+        with self.assertRaises(ValueError):
+            load_and_clean_chunked(io.StringIO("col_a,col_b\n"))
+
     def test_analyze_dataset_with_chunksize(self) -> None:
         """analyze_dataset adheres to Law 2 & Law 3 when chunksize is provided."""
         stream = self._get_stream()

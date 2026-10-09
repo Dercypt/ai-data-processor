@@ -770,7 +770,7 @@ def render_memory_evaluation_tab(file_or_data: Optional[object]) -> None:
     st.markdown("#### 🔬 Empirical Memory Footprint Evaluation across Chunk Sizes")
     st.caption(
         "Demonstrating asymptotic space complexity differences between monolithic $O(N)$ DataFrame "
-        "loading versus bounded $O(C)$ streaming and chunked ingestion."
+        "loading versus bounded $O(C)$ streaming cleaning."
     )
 
     eval_col1, eval_col2 = st.columns([1, 2])
@@ -960,13 +960,13 @@ def render_imputation_drift_benchmark(
 # --- MAIN APP: UPLOAD & ANALYZE ---
 
 st.write("### 📂 Tabular Dataset Ingestion")
-with st.expander("⚙️ Memory Optimization & Ingestion Configuration", expanded=False):
+with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=False):
     cfg_col1, cfg_col2 = st.columns(2)
     with cfg_col1:
         use_chunked = st.checkbox(
-            "Enable Chunked Ingestion (Bounded O(C) Memory)",
+            "Enable Chunked Ingestion (Batch Processing)",
             value=True,
-            help="Ingests CSV data in bounded chunksize slices rather than monolithic O(N) allocation.",
+            help="Parses CSV data in batch chunks during ingestion before in-memory DataFrame assembly.",
             key="cfg_use_chunked",
         )
     with cfg_col2:
@@ -1098,6 +1098,6 @@ else:
     with st.expander("🔬 CS Faculty Evaluation: Live Memory Benchmark Sandbox", expanded=False):
         st.caption(
             "No CSV uploaded yet. Run an empirical memory footprint evaluation against a synthetic 20,000-row dataset "
-            "to benchmark monolithic $O(N)$ vs bounded $O(C)$ chunk sizes:"
+            "to benchmark monolithic $O(N)$ DataFrame loading vs bounded $O(C)$ streaming cleaning across chunk sizes:"
         )
         render_memory_evaluation_tab(None)
