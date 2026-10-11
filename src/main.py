@@ -1,4 +1,5 @@
 import json
+import os
 import streamlit as st
 import time
 import pandas as pd
@@ -30,6 +31,10 @@ from database import (
     AuthenticationError,
 )
 
+# Propagate Streamlit secrets configuration to environment if present
+if hasattr(st, "secrets") and "SQLITE_DB_PATH" in st.secrets and "SQLITE_DB_PATH" not in os.environ:
+    os.environ["SQLITE_DB_PATH"] = str(st.secrets["SQLITE_DB_PATH"])
+
 # 1. Initialize DB on app startup
 init_db()
 
@@ -41,6 +46,17 @@ if "generated_insight" not in st.session_state:
     st.session_state["generated_insight"] = None
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
+
+
+def get_current_user_id() -> Optional[int]:
+    """Retrieve the active analyst's user ID from session state, if authenticated."""
+    current_u = st.session_state.get("current_user")
+    if isinstance(current_u, dict) and "id" in current_u:
+        try:
+            return int(current_u["id"])
+        except (ValueError, TypeError):
+            return None
+    return None
 
 
 def render_sidebar_insights(insights: str) -> None:
@@ -114,7 +130,7 @@ st.sidebar.divider()
 st.sidebar.title("Analysis History")
 
 active_user = st.session_state["current_user"]
-active_user_id = active_user["id"] if active_user else None
+active_user_id = get_current_user_id()
 
 if active_user:
     st.sidebar.caption(f"Private history for **{active_user['username']}**")
@@ -1076,11 +1092,7 @@ if file:
                         insights = get_ai_insights(ai_payload)
                         st.session_state["generated_insight"] = insights
 
-                        active_uid = (
-                            st.session_state["current_user"]["id"]
-                            if st.session_state.get("current_user")
-                            else None
-                        )
+                        active_uid = get_current_user_id()
                         save_entry(custom_title, insights, user_id=active_uid)
                         st.success("Saved to History!")
 

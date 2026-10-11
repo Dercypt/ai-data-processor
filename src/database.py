@@ -7,10 +7,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, Generator, List, Optional, Tuple, Union
 
-try:
-    import streamlit as st
-except ImportError:
-    st = None  # type: ignore[assignment]
 
 
 # --- DOMAIN EXCEPTIONS ---
@@ -42,15 +38,9 @@ DEFAULT_USERNAME: str = "default"
 
 
 def get_db_path() -> str:
-    """Resolve database path from environment variable, secrets, or fallback."""
+    """Resolve database path from environment variable or fallback."""
     if os.environ.get("SQLITE_DB_PATH"):
         return os.environ["SQLITE_DB_PATH"]
-    if st is not None:
-        try:
-            if hasattr(st, "secrets") and "SQLITE_DB_PATH" in st.secrets:
-                return str(st.secrets["SQLITE_DB_PATH"])
-        except Exception:
-            pass
     return DEFAULT_DB_PATH
 
 
@@ -286,20 +276,7 @@ def save_entry(
 
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-        resolved_user_id = user_id
-
-        # Resolve from Streamlit session state if available and not explicitly provided
-        if resolved_user_id is None and st is not None:
-            try:
-                if hasattr(st, "session_state") and "current_user" in st.session_state:
-                    current_u = st.session_state["current_user"]
-                    if isinstance(current_u, dict) and "id" in current_u:
-                        resolved_user_id = int(current_u["id"])
-            except Exception:
-                resolved_user_id = None
-
-        if resolved_user_id is None:
-            resolved_user_id = _get_default_user_id(conn)
+        resolved_user_id = user_id if user_id is not None else _get_default_user_id(conn)
 
         cursor.execute(
             """
@@ -321,18 +298,8 @@ def get_all_entries(
     """
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-        resolved_user_id = user_id
 
-        if resolved_user_id is None and st is not None:
-            try:
-                if hasattr(st, "session_state") and "current_user" in st.session_state:
-                    current_u = st.session_state["current_user"]
-                    if isinstance(current_u, dict) and "id" in current_u:
-                        resolved_user_id = int(current_u["id"])
-            except Exception:
-                resolved_user_id = None
-
-        if resolved_user_id is not None:
+        if user_id is not None:
             cursor.execute(
                 """
                 SELECT id, timestamp, filename, insights
@@ -340,7 +307,7 @@ def get_all_entries(
                 WHERE user_id = ?
                 ORDER BY timestamp DESC, id DESC
                 """,
-                (resolved_user_id,),
+                (user_id,),
             )
         else:
             cursor.execute(
@@ -375,21 +342,11 @@ def delete_entry(
 
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-        resolved_user_id = user_id
 
-        if resolved_user_id is None and st is not None:
-            try:
-                if hasattr(st, "session_state") and "current_user" in st.session_state:
-                    current_u = st.session_state["current_user"]
-                    if isinstance(current_u, dict) and "id" in current_u:
-                        resolved_user_id = int(current_u["id"])
-            except Exception:
-                resolved_user_id = None
-
-        if resolved_user_id is not None:
+        if user_id is not None:
             cursor.execute(
                 "DELETE FROM history WHERE id = ? AND user_id = ?",
-                (numeric_id, resolved_user_id),
+                (numeric_id, user_id),
             )
         else:
             cursor.execute("DELETE FROM history WHERE id = ?", (numeric_id,))
