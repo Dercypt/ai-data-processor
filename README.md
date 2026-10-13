@@ -12,7 +12,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 * **Automated Cleaning:** Instantly fills missing values and standardizes numerical data.
 * **Statistical Analysis:** Generates descriptive statistics (mean, median, std dev) automatically.
 * **AI Analyst Agent:** Uses the **Gemini Flash** model to interpret data trends and provide 3 key business insights.
-* **Cloud-Sync History:** Automatically saves analysis results to a Google Sheet for persistent storage across sessions.
+* **Database Persistence:** Automatically saves analysis results to a local SQLite database for persistent storage across sessions.
 * **Privacy Focused:** Your data is processed locally; only the statistical summary is sent to the LLM.
 
 ## Tech Stack
@@ -21,7 +21,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 * **Streamlit** (Frontend)
 * **Pandas** (Data Processing)
 * **Google Gemini API** (LLM Engine)
-* **Google Sheets API** (Cloud Database)
+* **SQLite** (Relational Database / Persistence)
   
 ## Run Locally (For Developers)
 
@@ -49,22 +49,29 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Set Up Secrets
-This project uses **Google Sheets** for the database and **Gemini** for AI.
-  1. Create a folder named `.streamlit` in the root directory.
-  2. Inside it, create a file named `secrets.toml`.
-  3. Add your credentials in this format:
-     ```bash
-     GOOGLE_API_KEY = "Your-Gemini-Key-Here"
+### 4. Set Up Secrets & Database Configuration
+This project uses **Google Gemini** for AI insights and **SQLite** for relational database persistence.
 
-     [connections.gsheets]
-     spreadsheet = "Your-Google-Sheet-URL"
-     type = "service_account"
-     project_id = "..."
-     # ... (Add full Google Service Account JSON details here)
+1. **Google Gemini API Key (Required for AI insights):**
+   - Create a folder named `.streamlit` in the root directory and create a `secrets.toml` file:
+     ```toml
+     GOOGLE_API_KEY = "Your-Gemini-Key-Here"
+     ```
+   - Alternatively, export the API key as an environment variable or define it in `.env`:
+     ```bash
+     export GOOGLE_API_KEY="Your-Gemini-Key-Here"
      ```
 
-     *(Note: If you just want to test the UI without the database, you can skip the GSheets section, but the history feature will be disabled.)*
+2. **SQLite Database Path (Optional):**
+   - By default, the application persists analysis history locally to `history.db` in the root directory.
+   - You can optionally customize the SQLite database path by setting the `SQLITE_DB_PATH` environment variable or defining it in `.streamlit/secrets.toml`:
+     ```bash
+     export SQLITE_DB_PATH="path/to/custom_history.db"
+     ```
+     or in `.streamlit/secrets.toml`:
+     ```toml
+     SQLITE_DB_PATH = "path/to/custom_history.db"
+     ```
      
 ### 5. Run the Application
 ```bash
@@ -79,7 +86,7 @@ ai-data-processor/
 ├── src/
 │   ├── main.py         # Streamlit UI Entry point
 │   ├── analyzer.py     # Pandas data processing logic
-│   ├── database.py     # Google Sheets connection manager
+│   ├── database.py     # SQLite persistence and history manager
 │   └── llm_service.py  # Google Gemini AI integration
 ├── .gitignore          # Protected files (API keys, etc.)
 ├── LICENSE             
