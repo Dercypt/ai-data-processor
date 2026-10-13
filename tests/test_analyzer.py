@@ -293,6 +293,18 @@ class TestAnalyzer(unittest.TestCase):
         self.assertEqual(summary["column_types"]["feature_a"], "continuous")
         self.assertEqual(summary["column_types"]["category"], "categorical")
 
+    def test_generate_summary_caching_decorator(self):
+        """generate_summary should be callable and return consistent summary dict across invocations."""
+        df_sample = pd.DataFrame({
+            "a": [1.0, 2.0, 3.0, 4.0],
+            "b": [10.0, 20.0, 30.0, 40.0],
+        })
+        summary_1 = generate_summary(df_sample)
+        summary_2 = generate_summary(df_sample)
+        self.assertEqual(summary_1["rows"], summary_2["rows"])
+        self.assertEqual(summary_1["columns"], summary_2["columns"])
+        self.assertEqual(summary_1["stats"], summary_2["stats"])
+
 
 if __name__ == "__main__":
     unittest.main()
