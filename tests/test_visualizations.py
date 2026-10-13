@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 # Mock streamlit before importing modules that depend on it
 mock_st = MagicMock()
+mock_st.cache_data.side_effect = lambda *a, **k: a[0] if len(a) == 1 and callable(a[0]) and not k else (lambda f: f)
 sys.modules["streamlit"] = mock_st
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
@@ -27,6 +28,7 @@ class TestVisualizations(unittest.TestCase):
             "c": ["cat", "dog"] * 25,
         })
         mock_st.reset_mock()
+        mock_st.session_state = {}
 
         def mock_columns(spec):
             n = spec if isinstance(spec, int) else len(spec)
@@ -184,7 +186,23 @@ class TestVisualizations(unittest.TestCase):
         df_out, summary_out = visualizations.render_preprocessing_pipeline(clean_df, detected)
         self.assertEqual(len(df_out), 3)
         self.assertIn("column_types", summary_out)
+        self.assertIn("dataset_summary", mock_st.session_state)
+        self.assertEqual(mock_st.session_state["dataset_summary"], summary_out)
         mock_st.success.assert_called()
+
+    def test_render_preprocessing_pipeline_with_imputation_persists_summary(self):
+        """render_preprocessing_pipeline persists summary to session_state after imputation."""
+        dirty_df = pd.DataFrame({"x": [1.0, np.nan, 3.0], "y": [4.0, 5.0, 6.0]})
+        detected = {"x": "continuous", "y": "continuous"}
+
+        mock_st.radio.return_value = "Global Strategy"
+        mock_st.selectbox.return_value = "Mean"
+
+        df_out, summary_out = visualizations.render_preprocessing_pipeline(dirty_df, detected)
+        self.assertEqual(len(df_out), 3)
+        self.assertEqual(int(df_out["x"].isnull().sum()), 0)
+        self.assertIn("dataset_summary", mock_st.session_state)
+        self.assertEqual(mock_st.session_state["dataset_summary"], summary_out)
 
     def test_render_structured_insights(self):
         """render_structured_insights should render summary, risks, and recommendations."""

@@ -9,6 +9,32 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
+try:
+    import streamlit as st
+
+    # In mock test environments, ensure st.cache_data returns the callable intact
+    if type(st.cache_data).__name__.endswith("Mock") or hasattr(st.cache_data, "mock_calls"):
+        st.cache_data = lambda *a, **k: a[0] if len(a) == 1 and callable(a[0]) and not k else (lambda f: f)
+except (ImportError, AttributeError):
+    class _DummyStreamlit:
+        @staticmethod
+        def cache_data(
+            func: Optional[Callable[..., object]] = None,
+            **kwargs: object,
+        ) -> Union[
+            Callable[..., object],
+            Callable[[Callable[..., object]], Callable[..., object]],
+        ]:
+            if func is not None and callable(func):
+                return func
+
+            def _decorator(f: Callable[..., object]) -> Callable[..., object]:
+                return f
+
+            return _decorator
+
+    st = _DummyStreamlit()  # type: ignore[assignment]
+
 DEFAULT_CHUNKSIZE: int = 10_000
 
 
@@ -406,6 +432,7 @@ def impute_missing_values(
         )
 
 
+@st.cache_data
 def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
     """Generate statistical summary and column type classifications for a DataFrame."""
     col_types = detect_column_types(df)
