@@ -2,6 +2,5 @@ pandas
 streamlit
 google-genai
 python-dotenv
-st-gsheets-connection
 plotly
 scikit-learn
