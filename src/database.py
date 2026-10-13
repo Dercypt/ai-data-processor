@@ -299,24 +299,17 @@ def get_all_entries(
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
 
-        if user_id is not None:
-            cursor.execute(
-                """
-                SELECT id, timestamp, filename, insights
-                FROM history
-                WHERE user_id = ?
-                ORDER BY timestamp DESC, id DESC
-                """,
-                (user_id,),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT id, timestamp, filename, insights
-                FROM history
-                ORDER BY timestamp DESC, id DESC
-                """
-            )
+        user_id = user_id if user_id is not None else _get_default_user_id(conn)
+
+        cursor.execute(
+            """
+            SELECT id, timestamp, filename, insights
+            FROM history
+            WHERE user_id = ?
+            ORDER BY timestamp DESC, id DESC
+            """,
+            (user_id,),
+        )
 
         rows = cursor.fetchall()
         return [
@@ -342,14 +335,12 @@ def delete_entry(
 
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
+        user_id = user_id if user_id is not None else _get_default_user_id(conn)
 
-        if user_id is not None:
-            cursor.execute(
-                "DELETE FROM history WHERE id = ? AND user_id = ?",
-                (numeric_id, user_id),
-            )
-        else:
-            cursor.execute("DELETE FROM history WHERE id = ?", (numeric_id,))
+        cursor.execute(
+            "DELETE FROM history WHERE id = ? AND user_id = ?",
+            (numeric_id, user_id),
+        )
 
         if cursor.rowcount == 0:
             raise EntryNotFoundError(f"History entry with ID {entry_id} not found.")
