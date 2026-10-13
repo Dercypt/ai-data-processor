@@ -575,6 +575,7 @@ def render_preprocessing_pipeline(
             st.success("✅ Dataset has no missing values. No imputation required.")
             summary = generate_summary(raw_df)
             summary["column_types"] = detected_types
+            st.session_state["dataset_summary"] = summary
             return raw_df, summary
 
         st.markdown("#### ⚙️ User-Configurable Imputation")
@@ -635,6 +636,7 @@ def render_preprocessing_pipeline(
 
         summary = generate_summary(processed_df)
         summary["column_types"] = detected_types
+        st.session_state["dataset_summary"] = summary
         return processed_df, summary
 
 

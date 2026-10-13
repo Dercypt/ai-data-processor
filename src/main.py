@@ -62,6 +62,8 @@ if "generated_insight" not in st.session_state:
     st.session_state["generated_insight"] = None
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
+if "dataset_summary" not in st.session_state:
+    st.session_state["dataset_summary"] = None
 
 
 def get_current_user_id() -> Optional[int]:
@@ -187,11 +189,14 @@ if file:
             file.seek(0)
 
         if raw_df.empty:
+            st.session_state["dataset_summary"] = None
             st.error("The uploaded CSV file is empty.")
         else:
             detected_types = detect_column_types(raw_df)
             df, summary = render_preprocessing_pipeline(raw_df, detected_types)
+            st.session_state["dataset_summary"] = summary
     except Exception as e:
+        st.session_state["dataset_summary"] = None
         st.error(f"Failed to process CSV: {e}")
 
     if df is not None and summary is not None:
