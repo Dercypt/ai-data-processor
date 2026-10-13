@@ -225,9 +225,40 @@ class TestDatabasePersistence(unittest.TestCase):
             for future in futures:
                 future.result()
 
-        entries = get_all_entries(db_path=self.db_path)
+        with get_connection(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM history;")
+            total_records = cursor.fetchone()[0]
         expected_total = num_analysts * num_writes_per_analyst
-        self.assertEqual(len(entries), expected_total)
+        self.assertEqual(total_records, expected_total)
+
+    def test_guest_session_workspace_isolation_and_delete_protection(self):
+        # Create a registered analyst and save private analysis
+        reg_user_id = create_user("registered_analyst", "Secret123", db_path=self.db_path)
+        save_entry("private_analysis.csv", "Registered Insights", user_id=reg_user_id, db_path=self.db_path)
+        reg_entries = get_all_entries(user_id=reg_user_id, db_path=self.db_path)
+        self.assertEqual(len(reg_entries), 1)
+        reg_entry_id = reg_entries[0][0]
+
+        # Guest (user_id=None) saves guest analysis
+        save_entry("guest_data.csv", "Guest Insights", user_id=None, db_path=self.db_path)
+
+        # Guest only sees guest workspace records (user_id=1), not registered analyst's records
+        guest_entries = get_all_entries(user_id=None, db_path=self.db_path)
+        self.assertEqual(len(guest_entries), 1)
+        self.assertEqual(guest_entries[0][2], "guest_data.csv")
+        guest_entry_id = guest_entries[0][0]
+
+        # Guest attempting to delete registered analyst's entry raises EntryNotFoundError
+        with self.assertRaises(EntryNotFoundError):
+            delete_entry(reg_entry_id, user_id=None, db_path=self.db_path)
+
+        # Registered analyst's entry remains untouched
+        self.assertEqual(len(get_all_entries(user_id=reg_user_id, db_path=self.db_path)), 1)
+
+        # Guest deleting guest entry succeeds
+        delete_entry(guest_entry_id, user_id=None, db_path=self.db_path)
+        self.assertEqual(len(get_all_entries(user_id=None, db_path=self.db_path)), 0)
 
     def test_database_has_zero_streamlit_dependency(self):
         import database
