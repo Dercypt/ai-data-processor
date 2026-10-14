@@ -1,11 +1,13 @@
+import io
 import os
 import streamlit as st
 import pandas as pd
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from analyzer import (
     DEFAULT_CHUNKSIZE,
     analyze_dataset,
+    generate_summary,
 )
 from llm_service import get_ai_insights
 from database import (
@@ -33,6 +35,7 @@ from visualizations import (
 
 __all__ = [
     "get_current_user_id",
+    "load_dataset",
     "render_sidebar_insights",
     "render_distribution_chart",
     "render_correlation_heatmap",
@@ -75,6 +78,24 @@ def get_current_user_id() -> Optional[int]:
         except (ValueError, TypeError):
             return None
     return None
+
+
+@st.cache_data
+def load_dataset(
+    file_bytes: bytes,
+) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
+    """Ingest CSV tabular dataset and compute baseline summary statistics with caching."""
+    if not file_bytes or len(file_bytes.strip()) == 0:
+        return None, None, "The uploaded CSV file is empty."
+    try:
+        buffer = io.BytesIO(file_bytes)
+        df = pd.read_csv(buffer)
+        if df.empty:
+            return None, None, "The uploaded CSV file is empty."
+        summary = generate_summary(df)
+        return df, summary, None
+    except Exception as e:
+        return None, None, str(e)
 
 
 # --- SIDEBAR: AUTHENTICATION & WORKSPACE ---
@@ -184,20 +205,19 @@ with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=F
 file = st.file_uploader("Upload CSV", type="csv")
 
 if file:
-    if st.session_state.get("current_file_id") != file.file_id:
-        st.session_state["current_file_id"] = file.file_id
+    file_id = getattr(file, "file_id", getattr(file, "name", "default_file"))
+    if st.session_state.get("current_file_id") != file_id:
+        st.session_state["current_file_id"] = file_id
         st.session_state["generated_insight"] = None
+        st.session_state["imputation_drift_results"] = None
+        st.session_state["benchmark_results"] = None
 
     df: Optional[pd.DataFrame] = None
     summary: Optional[Dict[str, object]] = None
 
     try:
-        chunksize_val = selected_chunksize if use_chunked else None
-        df, summary, err = analyze_dataset(
-            file,
-            strategy=selected_strategy,
-            chunksize=chunksize_val,
-        )
+        file_bytes: bytes = file.getvalue() if hasattr(file, "getvalue") else file.read()
+        df, summary, err = load_dataset(file_bytes)
 
         if hasattr(file, "seek"):
             file.seek(0)

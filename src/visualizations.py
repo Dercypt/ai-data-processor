@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analyzer import (
+    benchmark_imputation_drift,
     build_feature_dependency_graph,
     evaluate_memory_footprint,
     generate_summary,
@@ -797,7 +798,7 @@ def render_memory_evaluation_tab(file_or_data: Optional[object]) -> None:
 
 def render_imputation_drift_benchmark(
     df: pd.DataFrame,
-    initial_drift_data: Dict[str, object],
+    initial_drift_data: Optional[Dict[str, object]] = None,
 ) -> None:
     """Render interactive Imputation Data Drift Benchmark evaluating Wasserstein, KS, and PSI metrics."""
     st.markdown("#### 🔬 Imputation Algorithm Data Drift Benchmark")
@@ -821,7 +822,17 @@ def render_imputation_drift_benchmark(
             "Absolute shift in first (mean) and second (standard deviation) central moments."
         )
 
-    drift_data = initial_drift_data
+    run_btn = st.button("🚀 Run Benchmark", key="btn_run_drift_bench")
+    if run_btn:
+        with st.spinner("Evaluating empirical imputation drift across features..."):
+            st.session_state["imputation_drift_results"] = benchmark_imputation_drift(df)
+
+    drift_data: Dict[str, object] = {}
+    if initial_drift_data and isinstance(initial_drift_data.get("leaderboard"), list) and initial_drift_data.get("leaderboard"):
+        drift_data = initial_drift_data
+    elif "imputation_drift_results" in st.session_state and isinstance(st.session_state["imputation_drift_results"], dict):
+        drift_data = st.session_state["imputation_drift_results"]
+
     leaderboard = drift_data.get("leaderboard", [])
     if not isinstance(leaderboard, list) or not leaderboard:
         st.info("No numeric features with sufficient sample size (>=10) for imputation drift benchmarking.")

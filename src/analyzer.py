@@ -407,7 +407,10 @@ def impute_missing_values(
         )
 
 
-def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
+def generate_summary(
+    df: pd.DataFrame,
+    include_drift: bool = False,
+) -> Dict[str, object]:
     """Generate statistical summary and column type classifications for a DataFrame."""
     col_types = detect_column_types(df)
     corr = compute_correlations(df)
@@ -417,7 +420,7 @@ def generate_summary(df: pd.DataFrame) -> Dict[str, object]:
     iso_outliers = detect_outliers_isolation_forest(df)
     dependency_graph = build_feature_dependency_graph(df)
     heuristic_anomalies = evaluate_heuristic_rules(df)
-    imputation_drift = benchmark_imputation_drift(df)
+    imputation_drift = benchmark_imputation_drift(df) if include_drift else {}
 
     summary: Dict[str, object] = {
         "columns": list(df.columns),
