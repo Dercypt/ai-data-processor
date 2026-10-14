@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-import time
 import pandas as pd
 from typing import Dict, Optional
 
@@ -290,7 +289,6 @@ if file:
                         save_entry(custom_title, insights, user_id=active_uid)
                         st.success("Saved to History!")
 
-                        time.sleep(0.5)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to generate structured insights: {e}")
