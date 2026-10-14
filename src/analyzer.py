@@ -595,11 +595,13 @@ def load_and_clean_chunked(
 
 def analyze_dataset(
     file: object,
+    strategy: Union[str, Dict[str, str]] = "mean",
     chunksize: Optional[int] = DEFAULT_CHUNKSIZE,
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
     """
     Ingest, clean, and compute comprehensive statistical data science summaries.
-    Supports chunked ingestion batching via `chunksize`.
+    Supports chunked ingestion batching via `chunksize` and customizable
+    missing value imputation strategies via `strategy` (Law 2).
     Adheres strictly to Law 2 (cleaning integrity) and Law 3 (return contract).
 
     Note on memory complexity:
@@ -608,7 +610,34 @@ def analyze_dataset(
     O(C) memory operations, use stream_clean_to_csv().
     """
     try:
-        df, col_types = load_and_clean_chunked(file, chunksize=chunksize)
+        if isinstance(strategy, int):
+            chunksize = strategy
+            actual_strategy: Union[str, Dict[str, str]] = "mean"
+        else:
+            actual_strategy = strategy
+
+        if file is None:
+            raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
+
+        if hasattr(file, "seek"):
+            try:
+                file.seek(0)
+            except Exception:
+                pass
+
+        if isinstance(file, pd.DataFrame):
+            raw_df = file.copy()
+            if raw_df.empty:
+                raise ValueError("The uploaded CSV file is empty.")
+        elif chunksize is not None and chunksize > 0:
+            raw_df = read_csv_chunked(file, chunksize=chunksize)
+        else:
+            raw_df = pd.read_csv(file)
+            if raw_df.empty:
+                raise ValueError("The uploaded CSV file is empty.")
+
+        col_types = detect_column_types(raw_df)
+        df = impute_missing_values(raw_df, strategy=actual_strategy)
         summary = generate_summary(df)
         summary["column_types"] = col_types
         return df, summary, None
