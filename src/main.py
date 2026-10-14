@@ -170,16 +170,7 @@ else:
 
 
 # --- MAIN APP: UPLOAD & ANALYZE ---
-
 st.write("### 📂 Tabular Dataset Ingestion")
-with st.expander("⚙️ Dataset Preprocessing Configuration", expanded=False):
-    selected_strategy = st.selectbox(
-        "Imputation Strategy:",
-        options=["mean", "median", "mode", "drop"],
-        index=0,
-        help="Missing value imputation strategy applied during dataset analysis.",
-        key="cfg_imputation_strategy",
-    )
 
 file = st.file_uploader("Upload CSV", type="csv")
 
@@ -211,6 +202,10 @@ if file:
         st.error(f"Failed to process CSV: {e}")
 
     if df is not None and summary is not None:
+        raw_col_types = summary.get("column_types", {})
+        col_types_map: Dict[str, str] = raw_col_types if isinstance(raw_col_types, dict) else {}
+        df, summary = render_preprocessing_pipeline(df, col_types_map)
+
         st.write("### Data Preview", df.head())
 
         # UI Layout: Interactive Data Science & Statistics on left, AI Controls on right
