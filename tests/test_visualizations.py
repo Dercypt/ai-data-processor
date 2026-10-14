@@ -28,6 +28,7 @@ class TestVisualizations(unittest.TestCase):
             "c": ["cat", "dog"] * 25,
         })
         mock_st.reset_mock()
+        mock_st.button.return_value = False
         mock_st.session_state = {}
 
         def mock_columns(spec):
@@ -260,6 +261,15 @@ class TestVisualizations(unittest.TestCase):
         mock_st.reset_mock()
         visualizations.render_imputation_drift_benchmark(self.df, {})
         mock_st.info.assert_called_once()
+
+    def test_render_imputation_drift_benchmark_on_demand_button(self):
+        """render_imputation_drift_benchmark should compute drift on demand when run button is clicked."""
+        mock_st.reset_mock()
+        mock_st.button.return_value = True
+        visualizations.render_imputation_drift_benchmark(self.df, {})
+        self.assertIn("imputation_drift_results", mock_st.session_state)
+        self.assertTrue(mock_st.plotly_chart.called)
+        self.assertTrue(mock_st.dataframe.called)
 
     def test_cached_generate_summary(self):
         """cached_generate_summary should compute and return dataset statistical summary."""

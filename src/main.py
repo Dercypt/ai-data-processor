@@ -1,12 +1,10 @@
+import io
 import os
 import streamlit as st
 import pandas as pd
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
-from analyzer import (
-    DEFAULT_CHUNKSIZE,
-    analyze_dataset,
-)
+from analyzer import generate_summary
 from llm_service import get_ai_insights
 from database import (
     init_db,
@@ -33,6 +31,7 @@ from visualizations import (
 
 __all__ = [
     "get_current_user_id",
+    "load_dataset",
     "render_sidebar_insights",
     "render_distribution_chart",
     "render_correlation_heatmap",
@@ -75,6 +74,24 @@ def get_current_user_id() -> Optional[int]:
         except (ValueError, TypeError):
             return None
     return None
+
+
+@st.cache_data
+def load_dataset(
+    file_bytes: bytes,
+) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
+    """Ingest CSV tabular dataset and compute baseline summary statistics with caching."""
+    if not file_bytes or len(file_bytes.strip()) == 0:
+        return None, None, "The uploaded CSV file is empty."
+    try:
+        buffer = io.BytesIO(file_bytes)
+        df = pd.read_csv(buffer)
+        if df.empty:
+            return None, None, "The uploaded CSV file is empty."
+        summary = generate_summary(df)
+        return df, summary, None
+    except Exception as e:
+        return None, None, str(e)
 
 
 # --- SIDEBAR: AUTHENTICATION & WORKSPACE ---
@@ -153,51 +170,24 @@ else:
 
 
 # --- MAIN APP: UPLOAD & ANALYZE ---
-
 st.write("### 📂 Tabular Dataset Ingestion")
-with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=False):
-    cfg_col1, cfg_col2, cfg_col3 = st.columns(3)
-    with cfg_col1:
-        use_chunked = st.checkbox(
-            "Enable Chunked Ingestion (Batch Processing)",
-            value=True,
-            help="Parses CSV data in batch chunks during ingestion before in-memory DataFrame assembly.",
-            key="cfg_use_chunked",
-        )
-    with cfg_col2:
-        selected_chunksize = st.select_slider(
-            "Ingestion Chunk Size (rows per batch):",
-            options=[1000, 5000, 10000, 25000, 50000],
-            value=DEFAULT_CHUNKSIZE,
-            disabled=not use_chunked,
-            key="cfg_chunksize",
-        )
-    with cfg_col3:
-        selected_strategy = st.selectbox(
-            "Imputation Strategy:",
-            options=["mean", "median", "mode", "drop"],
-            index=0,
-            help="Missing value imputation strategy applied during dataset analysis.",
-            key="cfg_imputation_strategy",
-        )
 
 file = st.file_uploader("Upload CSV", type="csv")
 
 if file:
-    if st.session_state.get("current_file_id") != file.file_id:
-        st.session_state["current_file_id"] = file.file_id
+    file_id = getattr(file, "file_id", getattr(file, "name", "default_file"))
+    if st.session_state.get("current_file_id") != file_id:
+        st.session_state["current_file_id"] = file_id
         st.session_state["generated_insight"] = None
+        st.session_state["imputation_drift_results"] = None
+        st.session_state["benchmark_results"] = None
 
     df: Optional[pd.DataFrame] = None
     summary: Optional[Dict[str, object]] = None
 
     try:
-        chunksize_val = selected_chunksize if use_chunked else None
-        df, summary, err = analyze_dataset(
-            file,
-            strategy=selected_strategy,
-            chunksize=chunksize_val,
-        )
+        file_bytes: bytes = file.getvalue() if hasattr(file, "getvalue") else file.read()
+        df, summary, err = load_dataset(file_bytes)
 
         if hasattr(file, "seek"):
             file.seek(0)
@@ -212,6 +202,10 @@ if file:
         st.error(f"Failed to process CSV: {e}")
 
     if df is not None and summary is not None:
+        raw_col_types = summary.get("column_types", {})
+        col_types_map: Dict[str, str] = raw_col_types if isinstance(raw_col_types, dict) else {}
+        df, summary = render_preprocessing_pipeline(df, col_types_map)
+
         st.write("### Data Preview", df.head())
 
         # UI Layout: Interactive Data Science & Statistics on left, AI Controls on right
