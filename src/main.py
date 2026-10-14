@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-import time
 import pandas as pd
 from typing import Dict, Optional
 
@@ -63,6 +62,8 @@ if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
 if "dataset_summary" not in st.session_state:
     st.session_state["dataset_summary"] = None
+if "current_file_id" not in st.session_state:
+    st.session_state["current_file_id"] = None
 
 
 def get_current_user_id() -> Optional[int]:
@@ -183,6 +184,10 @@ with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=F
 file = st.file_uploader("Upload CSV", type="csv")
 
 if file:
+    if st.session_state.get("current_file_id") != file.file_id:
+        st.session_state["current_file_id"] = file.file_id
+        st.session_state["generated_insight"] = None
+
     df: Optional[pd.DataFrame] = None
     summary: Optional[Dict[str, object]] = None
 
@@ -284,7 +289,6 @@ if file:
                         save_entry(custom_title, insights, user_id=active_uid)
                         st.success("Saved to History!")
 
-                        time.sleep(0.5)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to generate structured insights: {e}")
