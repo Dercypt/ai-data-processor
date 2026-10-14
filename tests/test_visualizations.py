@@ -261,6 +261,14 @@ class TestVisualizations(unittest.TestCase):
         visualizations.render_imputation_drift_benchmark(self.df, {})
         mock_st.info.assert_called_once()
 
+    def test_cached_generate_summary(self):
+        """cached_generate_summary should compute and return dataset statistical summary."""
+        summary = visualizations.cached_generate_summary(self.df)
+        self.assertIn("columns", summary)
+        self.assertIn("stats", summary)
+        self.assertEqual(summary["rows"], len(self.df))
+
 
 if __name__ == "__main__":
     unittest.main()
+

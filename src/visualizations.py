@@ -539,6 +539,12 @@ def render_outlier_inspector(
             st.plotly_chart(fig, use_container_width=True)
 
 
+@st.cache_data
+def cached_generate_summary(df: pd.DataFrame) -> Dict[str, object]:
+    """Presentation-layer cached wrapper for dataset summary generation."""
+    return generate_summary(df)
+
+
 def render_preprocessing_pipeline(
     raw_df: pd.DataFrame,
     detected_types: Dict[str, str],
@@ -573,7 +579,7 @@ def render_preprocessing_pipeline(
         missing_cols = [c for c in raw_df.columns if raw_df[c].isnull().any()]
         if not missing_cols:
             st.success("✅ Dataset has no missing values. No imputation required.")
-            summary = generate_summary(raw_df)
+            summary = cached_generate_summary(raw_df)
             summary["column_types"] = detected_types
             st.session_state["dataset_summary"] = summary
             return raw_df, summary
@@ -634,7 +640,7 @@ def render_preprocessing_pipeline(
         else:
             st.success(f"Row count preserved ({final_len} rows). All missing values resolved.")
 
-        summary = generate_summary(processed_df)
+        summary = cached_generate_summary(processed_df)
         summary["column_types"] = detected_types
         st.session_state["dataset_summary"] = summary
         return processed_df, summary
