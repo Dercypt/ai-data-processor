@@ -332,6 +332,16 @@ class TestAnalyzer(unittest.TestCase):
         self.assertEqual(summary_1["columns"], summary_2["columns"])
         self.assertEqual(summary_1["stats"], summary_2["stats"])
 
+    def test_analyzer_has_zero_streamlit_dependency(self):
+        """analyzer module must have zero import or dependency on streamlit (separation of concerns)."""
+        import analyzer
+
+        self.assertFalse(hasattr(analyzer, "st"))
+        with open(analyzer.__file__, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertNotIn("streamlit", content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
