@@ -63,6 +63,8 @@ if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
 if "dataset_summary" not in st.session_state:
     st.session_state["dataset_summary"] = None
+if "current_file_id" not in st.session_state:
+    st.session_state["current_file_id"] = None
 
 
 def get_current_user_id() -> Optional[int]:
@@ -183,6 +185,10 @@ with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=F
 file = st.file_uploader("Upload CSV", type="csv")
 
 if file:
+    if st.session_state.get("current_file_id") != file.file_id:
+        st.session_state["current_file_id"] = file.file_id
+        st.session_state["generated_insight"] = None
+
     df: Optional[pd.DataFrame] = None
     summary: Optional[Dict[str, object]] = None
 
