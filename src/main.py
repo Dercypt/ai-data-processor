@@ -4,11 +4,7 @@ import streamlit as st
 import pandas as pd
 from typing import Dict, Optional, Tuple
 
-from analyzer import (
-    DEFAULT_CHUNKSIZE,
-    analyze_dataset,
-    generate_summary,
-)
+from analyzer import generate_summary
 from llm_service import get_ai_insights
 from database import (
     init_db,
@@ -176,31 +172,14 @@ else:
 # --- MAIN APP: UPLOAD & ANALYZE ---
 
 st.write("### 📂 Tabular Dataset Ingestion")
-with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=False):
-    cfg_col1, cfg_col2, cfg_col3 = st.columns(3)
-    with cfg_col1:
-        use_chunked = st.checkbox(
-            "Enable Chunked Ingestion (Batch Processing)",
-            value=True,
-            help="Parses CSV data in batch chunks during ingestion before in-memory DataFrame assembly.",
-            key="cfg_use_chunked",
-        )
-    with cfg_col2:
-        selected_chunksize = st.select_slider(
-            "Ingestion Chunk Size (rows per batch):",
-            options=[1000, 5000, 10000, 25000, 50000],
-            value=DEFAULT_CHUNKSIZE,
-            disabled=not use_chunked,
-            key="cfg_chunksize",
-        )
-    with cfg_col3:
-        selected_strategy = st.selectbox(
-            "Imputation Strategy:",
-            options=["mean", "median", "mode", "drop"],
-            index=0,
-            help="Missing value imputation strategy applied during dataset analysis.",
-            key="cfg_imputation_strategy",
-        )
+with st.expander("⚙️ Dataset Preprocessing Configuration", expanded=False):
+    selected_strategy = st.selectbox(
+        "Imputation Strategy:",
+        options=["mean", "median", "mode", "drop"],
+        index=0,
+        help="Missing value imputation strategy applied during dataset analysis.",
+        key="cfg_imputation_strategy",
+    )
 
 file = st.file_uploader("Upload CSV", type="csv")
 
