@@ -69,8 +69,35 @@ class TestAnalyzer(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(len(df_clean), 3)
         self.assertEqual(df_clean.isnull().sum().sum(), 0)
-        self.assertEqual(df_clean.loc[1, "col_num"], 0.0)
-        self.assertEqual(df_clean.loc[2, "col_cat"], "Unknown")
+        self.assertEqual(df_clean.loc[1, "col_num"], 2.0)
+        self.assertEqual(df_clean.loc[2, "col_cat"], "apple")
+
+    def test_analyze_dataset_custom_imputation_strategies(self):
+        # Test median strategy
+        csv_data_median = io.StringIO("col_num,col_cat\n1.0,apple\n,banana\n3.0,\n")
+        df_median, summary_med, err_med = analyze_dataset(csv_data_median, strategy="median")
+        self.assertIsNone(err_med)
+        self.assertEqual(len(df_median), 3)
+        self.assertEqual(df_median.isnull().sum().sum(), 0)
+        self.assertEqual(df_median.loc[1, "col_num"], 2.0)
+
+        # Test drop strategy
+        csv_data_drop = io.StringIO("col_num,col_cat\n1.0,apple\n,banana\n3.0,\n")
+        df_drop, summary_drop, err_drop = analyze_dataset(csv_data_drop, strategy="drop")
+        self.assertIsNone(err_drop)
+        self.assertEqual(len(df_drop), 1)
+        self.assertEqual(df_drop.iloc[0]["col_num"], 1.0)
+        self.assertEqual(df_drop.iloc[0]["col_cat"], "apple")
+
+        # Test dictionary strategy mapping
+        csv_data_dict = io.StringIO("col_num,col_cat\n10.0,apple\n,banana\n20.0,\n")
+        df_dict, summary_dict, err_dict = analyze_dataset(
+            csv_data_dict,
+            strategy={"col_num": "mean", "col_cat": "mode"},
+        )
+        self.assertIsNone(err_dict)
+        self.assertEqual(len(df_dict), 3)
+        self.assertEqual(df_dict.loc[1, "col_num"], 15.0)
 
     def test_correlations(self):
         corr = compute_correlations(self.df)

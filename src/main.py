@@ -6,8 +6,7 @@ from typing import Dict, Optional
 
 from analyzer import (
     DEFAULT_CHUNKSIZE,
-    detect_column_types,
-    read_csv_chunked,
+    analyze_dataset,
 )
 from llm_service import get_ai_insights
 from database import (
@@ -156,7 +155,7 @@ else:
 
 st.write("### 📂 Tabular Dataset Ingestion")
 with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=False):
-    cfg_col1, cfg_col2 = st.columns(2)
+    cfg_col1, cfg_col2, cfg_col3 = st.columns(3)
     with cfg_col1:
         use_chunked = st.checkbox(
             "Enable Chunked Ingestion (Batch Processing)",
@@ -172,6 +171,14 @@ with st.expander("⚙️ Dataset Ingestion & Batching Configuration", expanded=F
             disabled=not use_chunked,
             key="cfg_chunksize",
         )
+    with cfg_col3:
+        selected_strategy = st.selectbox(
+            "Imputation Strategy:",
+            options=["mean", "median", "mode", "drop"],
+            index=0,
+            help="Missing value imputation strategy applied during dataset analysis.",
+            key="cfg_imputation_strategy",
+        )
 
 file = st.file_uploader("Upload CSV", type="csv")
 
@@ -180,20 +187,20 @@ if file:
     summary: Optional[Dict[str, object]] = None
 
     try:
-        if use_chunked:
-            raw_df = read_csv_chunked(file, chunksize=selected_chunksize)
-        else:
-            raw_df = pd.read_csv(file)
+        chunksize_val = selected_chunksize if use_chunked else None
+        df, summary, err = analyze_dataset(
+            file,
+            strategy=selected_strategy,
+            chunksize=chunksize_val,
+        )
 
         if hasattr(file, "seek"):
             file.seek(0)
 
-        if raw_df.empty:
+        if err:
             st.session_state["dataset_summary"] = None
-            st.error("The uploaded CSV file is empty.")
+            st.error(f"Failed to process CSV: {err}")
         else:
-            detected_types = detect_column_types(raw_df)
-            df, summary = render_preprocessing_pipeline(raw_df, detected_types)
             st.session_state["dataset_summary"] = summary
     except Exception as e:
         st.session_state["dataset_summary"] = None
