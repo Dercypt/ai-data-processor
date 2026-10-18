@@ -278,6 +278,33 @@ class TestVisualizations(unittest.TestCase):
         self.assertIn("stats", summary)
         self.assertEqual(summary["rows"], len(self.df))
 
+    def test_load_dataset_detects_column_types_without_full_summary(self):
+        """load_dataset should detect column types without executing redundant full summary pipeline."""
+        from unittest.mock import patch
+        import main
+
+        csv_bytes = b"feature1,feature2\n1.0,10\n2.0,20\n3.0,30"
+        with patch("analyzer.generate_summary") as mock_summary:
+            df, summary, err = main.load_dataset(csv_bytes)
+            mock_summary.assert_not_called()
+
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertEqual(len(df), 3)
+        self.assertIsNotNone(summary)
+        self.assertIn("column_types", summary)
+        self.assertEqual(summary["column_types"]["feature1"], "continuous")
+        self.assertNotIn("dependency_graph", summary)
+        self.assertNotIn("outliers", summary)
+
+    def test_load_dataset_empty_input_handling(self):
+        """load_dataset handles empty bytes and returns graceful error without crashing."""
+        import main
+        df, summary, err = main.load_dataset(b"")
+        self.assertIsNone(df)
+        self.assertIsNone(summary)
+        self.assertEqual(err, "The uploaded CSV file is empty.")
+
 
 if __name__ == "__main__":
     unittest.main()
