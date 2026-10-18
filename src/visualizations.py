@@ -828,10 +828,14 @@ def render_imputation_drift_benchmark(
             st.session_state["imputation_drift_results"] = benchmark_imputation_drift(df)
 
     drift_data: Dict[str, object] = {}
-    if initial_drift_data and isinstance(initial_drift_data.get("leaderboard"), list) and initial_drift_data.get("leaderboard"):
-        drift_data = initial_drift_data
-    elif "imputation_drift_results" in st.session_state and isinstance(st.session_state["imputation_drift_results"], dict):
+    if "imputation_drift_results" in st.session_state and isinstance(st.session_state["imputation_drift_results"], dict):
         drift_data = st.session_state["imputation_drift_results"]
+    elif initial_drift_data and isinstance(initial_drift_data, dict):
+        drift_data = initial_drift_data
+
+    if not drift_data:
+        st.info("Click '🚀 Run Benchmark' to evaluate imputation drift.")
+        return
 
     leaderboard = drift_data.get("leaderboard", [])
     if not isinstance(leaderboard, list) or not leaderboard:
