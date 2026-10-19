@@ -78,21 +78,46 @@ This project uses **Google Gemini** for AI insights and **SQLite** for relationa
 python -m streamlit run src/main.py
 ```
 
+### 6. Run Tests and Verification
+Run the automated test suite and verification pipeline:
+```bash
+# Run verification harness (syntax, tests, linter, type checks)
+./verify.sh
+
+# Or run tests directly via Python unittest
+python3 -m unittest discover -s tests -p "test_*.py"
+```
+
 ## Project Structure
 
 ```bash
 ai-data-processor/
-├── assets/             # Images and logos
 ├── src/
-│   ├── main.py         # Streamlit UI Entry point
-│   ├── analyzer.py     # Pandas data processing logic
-│   ├── database.py     # SQLite persistence and history manager
-│   └── llm_service.py  # Google Gemini AI integration
-├── .gitignore          # Protected files (API keys, etc.)
-├── LICENSE             
-├── requirements.txt    # Project dependencies
-└── README.md           # Documentation
+│   ├── analyzer.py            # Pandas data processing & statistical analysis logic
+│   ├── components.py          # UI components and re-exports
+│   ├── database.py            # SQLite persistence and history manager
+│   ├── llm_service.py         # Google Gemini AI integration
+│   ├── main.py                # Streamlit UI entry point
+│   └── visualizations.py      # Plotly charts, graphs, and UI rendering modules
+├── tests/
+│   ├── test_analyzer.py       # Analyzer unit tests
+│   ├── test_chunked_processing.py # Chunked streaming ingestion tests
+│   ├── test_cs_engines.py     # Graph theory & CS algorithm tests
+│   ├── test_database.py       # SQLite database persistence tests
+│   ├── test_dataset_edge_cases.py # Dataset parsing and robustness tests
+│   ├── test_llm_service.py    # LLM service tests
+│   └── test_visualizations.py # Visualization and UI component tests
+├── .gitignore                 # Protected files (API keys, etc.)
+├── AGENTS.md                  # Agent operating instructions & governance
+├── HARNESS.md                 # Verification harness & toolchain specification
+├── LAWS.md                    # Non-negotiable system invariants
+├── LICENSE                    # MIT License
+├── PRINCIPLES.md              # Engineering principles & guidelines
+├── requirements.txt           # Project dependencies
+├── README.md                  # Documentation
+└── verify.sh                  # Comprehensive verification test runner script
 ```
+
 
 ## Contributing 
 

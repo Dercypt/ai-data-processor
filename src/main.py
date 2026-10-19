@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 from typing import Dict, Optional, Tuple
 
-from analyzer import generate_summary
+from analyzer import detect_column_types
 from llm_service import get_ai_insights
 from database import (
     init_db,
@@ -80,7 +80,7 @@ def get_current_user_id() -> Optional[int]:
 def load_dataset(
     file_bytes: bytes,
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
-    """Ingest CSV tabular dataset and compute baseline summary statistics with caching."""
+    """Ingest CSV tabular dataset and detect column types with caching."""
     if not file_bytes or len(file_bytes.strip()) == 0:
         return None, None, "The uploaded CSV file is empty."
     try:
@@ -88,7 +88,8 @@ def load_dataset(
         df = pd.read_csv(buffer)
         if df.empty:
             return None, None, "The uploaded CSV file is empty."
-        summary = generate_summary(df)
+        col_types = detect_column_types(df)
+        summary: Dict[str, object] = {"column_types": col_types}
         return df, summary, None
     except Exception as e:
         return None, None, str(e)
@@ -182,12 +183,12 @@ if file:
         st.session_state["imputation_drift_results"] = None
         st.session_state["benchmark_results"] = None
 
-    df: Optional[pd.DataFrame] = None
+    raw_df: Optional[pd.DataFrame] = None
     summary: Optional[Dict[str, object]] = None
 
     try:
         file_bytes: bytes = file.getvalue() if hasattr(file, "getvalue") else file.read()
-        df, summary, err = load_dataset(file_bytes)
+        raw_df, summary, err = load_dataset(file_bytes)
 
         if hasattr(file, "seek"):
             file.seek(0)
@@ -201,12 +202,12 @@ if file:
         st.session_state["dataset_summary"] = None
         st.error(f"Failed to process CSV: {e}")
 
-    if df is not None and summary is not None:
+    if raw_df is not None and summary is not None:
         raw_col_types = summary.get("column_types", {})
         col_types_map: Dict[str, str] = raw_col_types if isinstance(raw_col_types, dict) else {}
-        df, summary = render_preprocessing_pipeline(df, col_types_map)
+        clean_df, summary = render_preprocessing_pipeline(raw_df, col_types_map)
 
-        st.write("### Data Preview", df.head())
+        st.write("### Data Preview", clean_df.head())
 
         # UI Layout: Interactive Data Science & Statistics on left, AI Controls on right
         col1, col2 = st.columns([2.5, 1])
@@ -228,17 +229,17 @@ if file:
                 stats_df = pd.DataFrame(summary.get("stats", {}))
                 st.dataframe(stats_df, use_container_width=True)
 
-                numeric_cols = list(df.select_dtypes(include=["number"]).columns)
+                numeric_cols = list(clean_df.select_dtypes(include=["number"]).columns)
                 if numeric_cols:
                     selected_col = st.selectbox("Select Feature to Visualize Distribution:", numeric_cols)
-                    render_distribution_chart(df, selected_col)
+                    render_distribution_chart(clean_df, selected_col)
 
             with tab_corr:
                 st.write("#### Correlation Analysis")
                 render_correlation_heatmap(summary.get("correlation", {}))  # type: ignore[arg-type]
 
             with tab_network:
-                render_feature_dependency_graph(df, summary.get("dependency_graph", {}))  # type: ignore[arg-type]
+                render_feature_dependency_graph(clean_df, summary.get("dependency_graph", {}))  # type: ignore[arg-type]
 
             with tab_skew:
                 st.write("#### Skewness & Kurtosis Testing")
@@ -251,10 +252,10 @@ if file:
 
             with tab_outliers:
                 st.write("#### Statistical Outlier Detection")
-                render_outlier_inspector(df, summary.get("outliers", {}))  # type: ignore[arg-type]
+                render_outlier_inspector(clean_df, summary.get("outliers", {}))  # type: ignore[arg-type]
 
             with tab_drift:
-                render_imputation_drift_benchmark(df, summary.get("imputation_drift", {}))  # type: ignore[arg-type]
+                render_imputation_drift_benchmark(raw_df, summary.get("imputation_drift", {}))  # type: ignore[arg-type]
 
             with tab_memory:
                 render_memory_evaluation_tab(file)

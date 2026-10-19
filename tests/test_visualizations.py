@@ -257,10 +257,17 @@ class TestVisualizations(unittest.TestCase):
         self.assertTrue(mock_st.plotly_chart.called)
         self.assertTrue(mock_st.dataframe.called)
 
-        # Empty data
+        # Empty data prompts user to run benchmark
         mock_st.reset_mock()
         visualizations.render_imputation_drift_benchmark(self.df, {})
-        mock_st.info.assert_called_once()
+        mock_st.info.assert_called_once_with("Click '🚀 Run Benchmark' to evaluate imputation drift.")
+
+        # Evaluated drift data with empty leaderboard displays sample size message
+        mock_st.reset_mock()
+        visualizations.render_imputation_drift_benchmark(self.df, {"leaderboard": []})
+        mock_st.info.assert_called_once_with(
+            "No numeric features with sufficient sample size (>=10) for imputation drift benchmarking."
+        )
 
     def test_render_imputation_drift_benchmark_on_demand_button(self):
         """render_imputation_drift_benchmark should compute drift on demand when run button is clicked."""
@@ -277,6 +284,49 @@ class TestVisualizations(unittest.TestCase):
         self.assertIn("columns", summary)
         self.assertIn("stats", summary)
         self.assertEqual(summary["rows"], len(self.df))
+
+    def test_load_dataset_detects_column_types_without_full_summary(self):
+        """load_dataset should detect column types without executing redundant full summary pipeline."""
+        from unittest.mock import patch
+        import main
+
+        csv_bytes = b"feature1,feature2\n1.0,10\n2.0,20\n3.0,30"
+        with patch("analyzer.generate_summary") as mock_summary:
+            df, summary, err = main.load_dataset(csv_bytes)
+            mock_summary.assert_not_called()
+
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertEqual(len(df), 3)
+        self.assertIsNotNone(summary)
+        self.assertIn("column_types", summary)
+        self.assertEqual(summary["column_types"]["feature1"], "continuous")
+        self.assertNotIn("dependency_graph", summary)
+        self.assertNotIn("outliers", summary)
+
+    def test_load_dataset_empty_input_handling(self):
+        """load_dataset handles empty bytes and returns graceful error without crashing."""
+        import main
+        df, summary, err = main.load_dataset(b"")
+        self.assertIsNone(df)
+        self.assertIsNone(summary)
+        self.assertEqual(err, "The uploaded CSV file is empty.")
+
+    def test_render_imputation_drift_benchmark_handles_raw_unimputed_df(self):
+        """render_imputation_drift_benchmark runs benchmark on raw un-imputed data when clicked."""
+        from unittest.mock import patch
+        raw_df = pd.DataFrame({"x": [1.0, np.nan, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]})
+        mock_st.reset_mock()
+        mock_st.button.return_value = True
+        with patch("visualizations.benchmark_imputation_drift") as mock_bench:
+            mock_bench.return_value = {
+                "optimal_strategy": "mean",
+                "leaderboard": [],
+                "evaluated_features": [],
+                "per_feature_results": {},
+            }
+            visualizations.render_imputation_drift_benchmark(raw_df, {})
+            mock_bench.assert_called_once_with(raw_df)
 
 
 if __name__ == "__main__":
