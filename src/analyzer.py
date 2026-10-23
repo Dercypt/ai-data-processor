@@ -604,14 +604,15 @@ def analyze_dataset(
 
         if isinstance(file, pd.DataFrame):
             raw_df = file.copy()
-            if raw_df.empty:
+        elif isinstance(file, bytes):
+            if not file or len(file.strip()) == 0:
                 raise ValueError("The uploaded CSV file is empty.")
-        elif chunksize is not None and chunksize > 0:
-            raw_df = read_csv_chunked(file, chunksize=chunksize)
+            raw_df = pd.read_csv(io.BytesIO(file))
         else:
             raw_df = pd.read_csv(file)
-            if raw_df.empty:
-                raise ValueError("The uploaded CSV file is empty.")
+
+        if raw_df.empty:
+            raise ValueError("The uploaded CSV file is empty.")
 
         col_types = detect_column_types(raw_df)
         df = impute_missing_values(raw_df, strategy=actual_strategy)

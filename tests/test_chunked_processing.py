@@ -154,6 +154,17 @@ class TestChunkedProcessing(unittest.TestCase):
         self.assertEqual(summary["rows"], self.num_rows)
         self.assertEqual(summary["columns"], list(self.sample_df.columns))
 
+    def test_analyze_dataset_avoids_chunk_concat_overhead(self) -> None:
+        """analyze_dataset should construct in-memory DataFrame directly without calling read_csv_chunked."""
+        from unittest.mock import patch
+        stream = self._get_stream()
+        with patch("analyzer.read_csv_chunked") as mock_chunked:
+            df_clean, summary, err = analyze_dataset(stream, chunksize=25)
+            mock_chunked.assert_not_called()
+        self.assertIsNone(err)
+        self.assertIsNotNone(df_clean)
+        self.assertEqual(len(df_clean), self.num_rows)
+
     def test_analyze_dataset_default_chunksize_backward_compatibility(self) -> None:
         """analyze_dataset called with single file argument continues to work seamlessly."""
         stream = self._get_stream()
