@@ -620,10 +620,13 @@ def analyze_dataset(
     Supports customizable missing value imputation strategies via `strategy` (Law 2).
     Adheres strictly to Law 2 (cleaning integrity) and Law 3 (return contract).
 
-    Note on memory complexity:
-    In-memory DataFrame construction is performed in a single pass via pd.read_csv()
-    to eliminate the ≈ 2 × O(N) peak memory overhead from chunk list accumulation and pd.concat().
-    Chunked streaming is strictly reserved for stream_clean_to_csv() where chunks are flushed
+    Note on chunksize and memory complexity:
+    `chunksize` is accepted in the public API signature for backward compatibility.
+    However, in-memory DataFrame construction intentionally bypasses chunked accumulation
+    (pd.read_csv(..., chunksize=C) followed by pd.concat()) because chunk accumulation causes
+    an unnecessary ≈ 2 × O(N) peak memory spike during concatenation. Single-pass pd.read_csv()
+    builds the DataFrame in-place with lower peak memory and avoids chunk-local imputation drift.
+    Chunked iteration is strictly reserved for stream_clean_to_csv() where chunks are flushed
     directly to the output stream and freed in bounded O(C) memory.
     """
     try:
@@ -632,6 +635,9 @@ def analyze_dataset(
             actual_strategy: Union[str, Dict[str, str]] = "mean"
         else:
             actual_strategy = strategy
+
+        if chunksize is not None and chunksize <= 0:
+            raise ValueError(f"chunksize must be a positive integer, got {chunksize}.")
 
         if file is None:
             raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
@@ -741,6 +747,11 @@ def evaluate_memory_footprint(
     Empirically evaluate and compare memory footprints and execution latency across chunk sizes.
     Demonstrates O(N) monolithic space complexity vs O(C) bounded chunked streaming cleaning.
     Utilizes Python standard library tracemalloc for deterministic heap tracking.
+
+    Workload Parity Note:
+    Both the monolithic baseline (O(N)) and chunked streaming loop (O(C)) execute identical
+    data cleaning and missing-value imputation workloads via clean_chunk(), ensuring a strict
+    apples-to-apples performance comparison.
     """
     if chunk_sizes is None:
         chunk_sizes = [500, 1000, 5000, 10000]
