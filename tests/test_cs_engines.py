@@ -234,6 +234,61 @@ class TestHeuristicRuleEngine(unittest.TestCase):
         self.assertIn(5, result["anomalous_indices"])
         self.assertLess(len(result["record_attributions"]), 51)
 
+    def test_evaluate_heuristic_rules_edge_cases(self) -> None:
+        """Verify edge cases: non-integer string indices, faulty predicate containment, and zero anomalies."""
+        # 1. Non-integer string indices
+        df_str_idx = pd.DataFrame(
+            {"val": [10.0, 20.0, 1000.0]},
+            index=["rec_alpha", "rec_beta", "rec_gamma"],
+        )
+        rule = HeuristicRule(
+            rule_id="RULE_HIGH",
+            name="High Value",
+            description="val > 100",
+            severity=0.90,
+            rule_type="test",
+            features=["val"],
+            predicate=lambda d: d["val"] > 100.0,
+        )
+        res_str = evaluate_heuristic_rules(df_str_idx, rules=[rule])
+        self.assertEqual(res_str["total_anomalies"], 1)
+        self.assertEqual(res_str["anomalous_indices"], ["rec_gamma"])
+        self.assertIn("rec_gamma", res_str["record_attributions"])
+
+        # 2. Faulty rule predicate containment (swallows exception without crashing)
+        def faulty_pred(d: pd.DataFrame) -> pd.Series:
+            raise RuntimeError("Corrupted predicate logic")
+
+        bad_rule = HeuristicRule(
+            rule_id="RULE_BAD",
+            name="Bad Rule",
+            description="Throws error",
+            severity=0.50,
+            rule_type="test",
+            features=["val"],
+            predicate=faulty_pred,
+        )
+        res_faulty = evaluate_heuristic_rules(df_str_idx, rules=[bad_rule, rule])
+        self.assertEqual(res_faulty["total_anomalies"], 1)
+        self.assertEqual(res_faulty["anomalous_indices"], ["rec_gamma"])
+
+        # 3. Zero anomalies scenario
+        clean_df = pd.DataFrame({"val": [1.0, 2.0, 3.0]})
+        untriggered_rule = HeuristicRule(
+            rule_id="RULE_UNTRIGGERED",
+            name="Never True",
+            description="val > 9999",
+            severity=0.50,
+            rule_type="test",
+            features=["val"],
+            predicate=lambda d: d["val"] > 9999.0,
+        )
+        res_zero = evaluate_heuristic_rules(clean_df, rules=[untriggered_rule])
+        self.assertEqual(res_zero["total_anomalies"], 0)
+        self.assertEqual(res_zero["anomalous_indices"], [])
+        self.assertEqual(res_zero["record_attributions"], {})
+        self.assertEqual(res_zero["top_anomalies"], [])
+
 
 class TestImputationDriftBenchmark(unittest.TestCase):
     def setUp(self) -> None:
