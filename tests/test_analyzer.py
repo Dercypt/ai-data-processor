@@ -260,6 +260,22 @@ class TestAnalyzer(unittest.TestCase):
         # Index 3 in cat_b is forward-filled from index 2 ("cherry")
         self.assertEqual(imputed.loc[3, "cat_b"], "cherry")
 
+    def test_impute_missing_values_global_random_draw(self):
+        df_missing = pd.DataFrame({
+            "num_a": [10.0, 20.0, 30.0, np.nan, np.nan],
+            "cat_b": ["alpha", "beta", np.nan, "alpha", np.nan],
+        })
+        imputed_1 = impute_missing_values(df_missing, strategy="random_draw", seed=42)
+        imputed_2 = impute_missing_values(df_missing, strategy="random_draw", seed=42)
+        self.assertEqual(imputed_1.isnull().sum().sum(), 0)
+        # Reproducibility with seed
+        pd.testing.assert_frame_equal(imputed_1, imputed_2)
+        # Imputed values must be sampled from observed values
+        self.assertTrue(imputed_1.loc[3, "num_a"] in [10.0, 20.0, 30.0])
+        self.assertTrue(imputed_1.loc[4, "num_a"] in [10.0, 20.0, 30.0])
+        self.assertTrue(imputed_1.loc[2, "cat_b"] in ["alpha", "beta"])
+        self.assertTrue(imputed_1.loc[4, "cat_b"] in ["alpha", "beta"])
+
     def test_impute_missing_values_global_drop(self):
         df_missing = pd.DataFrame({
             "num_a": [1.0, 2.0, np.nan, 4.0],
