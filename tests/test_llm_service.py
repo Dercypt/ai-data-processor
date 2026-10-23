@@ -49,6 +49,40 @@ class TestLLMService(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True):
                 self.assertIsNone(get_api_key())
 
+    def test_dotenv_module_integrated(self):
+        """Verify python-dotenv load_dotenv is imported and bound in llm_service."""
+        import llm_service
+        from dotenv import load_dotenv
+        self.assertTrue(hasattr(llm_service, "load_dotenv"))
+        self.assertIs(llm_service.load_dotenv, load_dotenv)
+
+    def test_get_api_key_from_dotenv_file(self):
+        """Verify .env file content loaded by dotenv is properly resolved by get_api_key."""
+        import tempfile
+        from dotenv import load_dotenv
+        with tempfile.NamedTemporaryFile("w+", delete=False) as f:
+            f.write("GOOGLE_API_KEY=test-key-from-dotenv-file\n")
+            f.flush()
+            temp_path = f.name
+        try:
+            with patch.dict(os.environ, {}, clear=True):
+                load_dotenv(dotenv_path=temp_path)
+                mock_st = MagicMock()
+                mock_st.secrets = {}
+                with patch("llm_service.st", mock_st):
+                    self.assertEqual(get_api_key(), "test-key-from-dotenv-file")
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def test_get_api_key_env_var_resolution(self):
+        """Verify get_api_key properly resolves GOOGLE_API_KEY when st.secrets is absent."""
+        mock_st = MagicMock()
+        mock_st.secrets = {}
+        with patch("llm_service.st", mock_st):
+            with patch.dict(os.environ, {"GOOGLE_API_KEY": "dotenv-loaded-key"}, clear=True):
+                self.assertEqual(get_api_key(), "dotenv-loaded-key")
+
     def test_missing_api_key_raises_configuration_error(self):
         with patch("llm_service.get_api_key", return_value=None):
             with self.assertRaises(LLMConfigurationError) as ctx:

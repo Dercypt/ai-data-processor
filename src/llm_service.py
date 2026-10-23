@@ -2,9 +2,12 @@ import json
 import os
 from typing import Dict, List, Optional, Union
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+
+load_dotenv()
 
 try:
     import streamlit as st

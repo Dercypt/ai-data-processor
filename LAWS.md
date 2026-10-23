@@ -1,16 +1,16 @@
 # Laws of the System
 
 ## Primary Domain
-**AI Data Processor** is an analytics application that ingests tabular datasets (CSV), performs automated data cleaning, computes statistical summaries, generates executive business insights via Google Gemini, and synchronizes analysis history to a Google Sheet cloud database.
+**AI Data Processor** is an analytics application that ingests tabular datasets (CSV), performs automated data cleaning, computes statistical summaries, generates executive business insights via Google Gemini, and synchronizes analysis history to a local SQLite relational database.
 
 ---
 
 ## Non-Negotiable System Invariants
 
 ### Law 0: Governance & Law Immutability (Strict Meta-Law)
-Files located in `tests/laws/` and `LAWS.md` are **strictly immutable and read-only to all agents**. 
+Verification test suites located in `tests/` and `LAWS.md` are **strictly immutable and read-only to all agents**. 
 * Under no circumstances may an agent alter, delete, comment out, xfail, skip, or weaken these laws or their verification tests.
-* Any proposed alteration to `LAWS.md` or `tests/laws/` requires explicit human approval outside the agent execution loop.
+* Any proposed alteration to `LAWS.md` or `tests/` requires explicit human approval outside the agent execution loop.
 
 ### Law 1: Data Privacy & LLM Boundary Protection
 **Raw tabular dataset rows and individual records must NEVER be sent to external LLM services.**
@@ -32,14 +32,14 @@ Files located in `tests/laws/` and `LAWS.md` are **strictly immutable and read-o
 * Protected code: [`src/analyzer.py`](src/analyzer.py), [`src/main.py`](src/main.py).
 
 ### Law 4: Persistence Schema & Audit Trail Integrity
-**The cloud persistence layer must strictly maintain the historical schema `[timestamp, filename, insights]`.**
+**The persistence layer must strictly maintain the SQLite relational schema `[id, user_id, timestamp, filename, insights]`.**
 * Timestamps must adhere to `%Y-%m-%d %H:%M:%S` format.
 * Historical records must be append-only unless an explicit user-initiated deletion is triggered.
-* A network failure or failed read from the database must **never** result in wiping or overwriting the existing sheet with an empty dataset.
+* A database query failure or connection error must **never** result in wiping or corrupting the existing database.
 * Protected code: [`src/database.py`](src/database.py).
 
 ### Law 5: Secret & Credential Boundary
-**API keys and service account credentials must never be committed to source control or leaked to logs.**
-* All secrets (`GOOGLE_API_KEY`, Google service account private keys) must strictly originate from `.streamlit/secrets.toml` or `.env`.
+**API keys and sensitive credentials must never be committed to source control or leaked to logs.**
+* All secrets (`GOOGLE_API_KEY`) must strictly originate from `.streamlit/secrets.toml` or `.env`.
 * Credentials must never appear in error messages, UI alerts, application logs, or git commits.
 * Protected code: [`.gitignore`](.gitignore), [`src/llm_service.py`](src/llm_service.py), [`src/database.py`](src/database.py).
