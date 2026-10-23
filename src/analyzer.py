@@ -179,10 +179,13 @@ def detect_outliers_isolation_forest(
 def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
     """
     Auto-detect semantic column types across tabular dataset:
-    - 'continuous': numeric features (int, float)
+    - 'continuous': numeric features (int, float, or object series with >=90% numeric strings)
     - 'categorical': low-cardinality nominal/ordinal features, booleans
     - 'datetime': timestamp and date features
     - 'text': free-form high-cardinality unstructured strings
+
+    Note: Object columns detected as 'continuous' maintain their original DataFrame dtype
+    unless explicitly coerced by the caller.
     """
     column_types: Dict[str, str] = {}
     total_rows = len(df)

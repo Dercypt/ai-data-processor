@@ -554,6 +554,9 @@ def render_preprocessing_pipeline(
     Render interactive Smart Preprocessing Pipeline controls:
     - Auto-detected column types (continuous, categorical, datetime, text)
     - User-configurable imputation (Mean, Median, Mode, Drop)
+    - Type safety gating: Mean/Median options are restricted to verified numeric dtypes
+      (pd.api.types.is_numeric_dtype) even if semantically detected as continuous
+    - Fault containment: Prevents false-positive success banners if imputation encounters errors
     """
     with st.expander("🛠️ Smart / Automated Preprocessing Pipeline", expanded=True):
         st.write("#### 🔍 Auto-Detected Column Types")
