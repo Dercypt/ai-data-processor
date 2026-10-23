@@ -226,10 +226,13 @@ class TestVisualizations(unittest.TestCase):
         mock_st.selectbox.side_effect = fake_selectbox
         try:
             visualizations.render_preprocessing_pipeline(raw_df, detected)
-            self.assertEqual(options_recorded.get("col_impute_num_str_col"), ["Mode", "Drop"])
+            self.assertEqual(
+                options_recorded.get("col_impute_num_str_col"),
+                ["Mode", "Forward Fill", "Random Draw", "Drop"],
+            )
             self.assertEqual(
                 options_recorded.get("col_impute_pure_num_col"),
-                ["Mean", "Median", "Mode", "Drop"],
+                ["Mean", "Median", "Mode", "Zero", "Forward Fill", "Random Draw", "Drop"],
             )
         finally:
             mock_st.selectbox.side_effect = None
@@ -294,10 +297,58 @@ class TestVisualizations(unittest.TestCase):
         mock_st.selectbox.side_effect = fake_selectbox
         try:
             df_out, summary = visualizations.render_preprocessing_pipeline(raw_df, detected)
-            self.assertEqual(options_recorded.get("col_impute_col_mixed"), ["Mode", "Drop"])
+            self.assertEqual(
+                options_recorded.get("col_impute_col_mixed"),
+                ["Mode", "Forward Fill", "Random Draw", "Drop"],
+            )
             mock_st.error.assert_not_called()
             mock_st.success.assert_called()
             self.assertEqual(int(df_out["col_mixed"].isnull().sum()), 0)
+        finally:
+            mock_st.selectbox.side_effect = None
+
+    def test_render_preprocessing_pipeline_extended_strategies_global(self):
+        """render_preprocessing_pipeline executes Zero, Forward Fill, and Random Draw globally."""
+        for strat in ["Zero", "Forward Fill", "Random Draw"]:
+            mock_st.reset_mock()
+            mock_st.session_state = {}
+            mock_st.radio.return_value = "Global Strategy"
+            mock_st.selectbox.return_value = strat
+
+            dirty_df = pd.DataFrame({"x": [10.0, np.nan, 30.0], "y": ["a", np.nan, "c"]})
+            detected = {"x": "continuous", "y": "categorical"}
+
+            df_out, summary_out = visualizations.render_preprocessing_pipeline(dirty_df, detected)
+            self.assertEqual(len(df_out), 3)
+            self.assertEqual(int(df_out.isnull().sum().sum()), 0)
+            mock_st.error.assert_not_called()
+            mock_st.success.assert_called()
+
+    def test_render_preprocessing_pipeline_extended_strategies_per_column(self):
+        """render_preprocessing_pipeline configures Zero, Forward Fill, and Random Draw per column."""
+        mock_st.reset_mock()
+        mock_st.session_state = {}
+        mock_st.radio.return_value = "Per-Column Strategy"
+
+        def fake_selectbox(label, options, key=None):
+            if key == "col_impute_num_col":
+                return "Zero"
+            elif key == "col_impute_cat_col":
+                return "Forward Fill"
+            return options[0]
+
+        mock_st.selectbox.side_effect = fake_selectbox
+        dirty_df = pd.DataFrame({"num_col": [1.0, np.nan, 3.0], "cat_col": ["a", np.nan, "b"]})
+        detected = {"num_col": "continuous", "cat_col": "categorical"}
+
+        try:
+            df_out, summary_out = visualizations.render_preprocessing_pipeline(dirty_df, detected)
+            self.assertEqual(len(df_out), 3)
+            self.assertEqual(int(df_out.isnull().sum().sum()), 0)
+            self.assertEqual(df_out.loc[1, "num_col"], 0.0)
+            self.assertEqual(df_out.loc[1, "cat_col"], "a")
+            mock_st.error.assert_not_called()
+            mock_st.success.assert_called()
         finally:
             mock_st.selectbox.side_effect = None
 

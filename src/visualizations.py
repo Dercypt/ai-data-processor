@@ -589,7 +589,7 @@ def render_preprocessing_pipeline(
             return raw_df, summary
 
         st.markdown("#### ⚙️ User-Configurable Imputation")
-        st.caption("Customize missing value imputation strategies across detected column types (Mean, Median, Mode, Drop).")
+        st.caption("Customize missing value imputation strategies across detected column types (Mean, Median, Mode, Zero, Forward Fill, Random Draw, Drop).")
 
         mode = st.radio(
             "Strategy Mode:",
@@ -602,12 +602,12 @@ def render_preprocessing_pipeline(
         imputation_failed = False
         if mode == "Global Strategy":
             global_opt = st.selectbox(
-                "Select Global Strategy (Mean, Median, Mode, Drop):",
-                options=["Mean", "Median", "Mode", "Drop"],
+                "Select Global Strategy (Mean, Median, Mode, Zero, Forward Fill, Random Draw, Drop):",
+                options=["Mean", "Median", "Mode", "Zero", "Forward Fill", "Random Draw", "Drop"],
                 key="global_imputation_select",
             )
             try:
-                processed_df = impute_missing_values(raw_df, strategy=global_opt.lower())
+                processed_df = impute_missing_values(raw_df, strategy=global_opt.lower().replace(" ", "_"))
                 st.info(f"Applied **{global_opt}** imputation globally across missing features.")
             except Exception as e:
                 imputation_failed = True
@@ -622,15 +622,15 @@ def render_preprocessing_pipeline(
                 is_numeric_col = pd.api.types.is_numeric_dtype(raw_df[col_name])
                 with cols_ui[idx % len(cols_ui)]:
                     if col_type == "continuous" and is_numeric_col:
-                        options = ["Mean", "Median", "Mode", "Drop"]
+                        options = ["Mean", "Median", "Mode", "Zero", "Forward Fill", "Random Draw", "Drop"]
                     else:
-                        options = ["Mode", "Drop"]
+                        options = ["Mode", "Forward Fill", "Random Draw", "Drop"]
                     selected_strategy = st.selectbox(
                         f"`{col_name}` ({col_type}):",
                         options=options,
                         key=f"col_impute_{col_name}",
                     )
-                    col_strategy_map[col_name] = selected_strategy.lower()
+                    col_strategy_map[col_name] = selected_strategy.lower().replace(" ", "_")
 
             try:
                 processed_df = impute_missing_values(raw_df, strategy=col_strategy_map)
