@@ -273,6 +273,34 @@ class TestVisualizations(unittest.TestCase):
             self.assertNotIn("All missing values resolved", str(arg))
             self.assertNotIn("Row count preserved", str(arg))
 
+    def test_render_preprocessing_pipeline_numeric_string_continuous_end_to_end(self):
+        """End-to-end edge case: object column with >=90% numeric strings and stray N/A string."""
+        from analyzer import detect_column_types
+
+        raw_df = pd.DataFrame({
+            "col_mixed": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "N/A", np.nan],
+        })
+        detected = detect_column_types(raw_df)
+        self.assertEqual(detected["col_mixed"], "continuous")
+        self.assertFalse(pd.api.types.is_numeric_dtype(raw_df["col_mixed"]))
+
+        mock_st.radio.return_value = "Per-Column Strategy"
+        options_recorded = {}
+
+        def fake_selectbox(label, options, key=None):
+            options_recorded[key] = options
+            return "Mode"
+
+        mock_st.selectbox.side_effect = fake_selectbox
+        try:
+            df_out, summary = visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(options_recorded.get("col_impute_col_mixed"), ["Mode", "Drop"])
+            mock_st.error.assert_not_called()
+            mock_st.success.assert_called()
+            self.assertEqual(int(df_out["col_mixed"].isnull().sum()), 0)
+        finally:
+            mock_st.selectbox.side_effect = None
+
     def test_render_structured_insights(self):
         """render_structured_insights should render summary, risks, and recommendations."""
         insights_dict = {
