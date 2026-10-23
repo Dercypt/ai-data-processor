@@ -445,18 +445,18 @@ def generate_summary(
     return summary
 
 
-def clean_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
+def clean_chunk(
+    chunk: pd.DataFrame,
+    strategy: Union[str, Dict[str, str]] = "mean",
+) -> pd.DataFrame:
     """
     Clean a single DataFrame chunk by eliminating missing values without dropping rows (Law 2).
-    Numeric features are imputed with 0, non-numeric with 'Unknown'.
+    Imputes numeric features using the arithmetic mean by default (matching impute_missing_values)
+    and non-numeric features with mode or 'Unknown'.
     """
-    cleaned = chunk.copy()
-    for col in cleaned.columns:
-        if pd.api.types.is_numeric_dtype(cleaned[col]):
-            cleaned[col] = cleaned[col].fillna(0)
-        else:
-            cleaned[col] = cleaned[col].fillna("Unknown")
-    return cleaned
+    if chunk.empty:
+        return chunk.copy()
+    return impute_missing_values(chunk, strategy=strategy)
 
 
 def read_csv_chunked(
@@ -469,9 +469,9 @@ def read_csv_chunked(
 
     Note on memory complexity:
     Reassembling chunks into a single pd.DataFrame requires O(N) memory allocation
-    for the complete dataset. For strictly bounded O(C) memory consumption where
-    the full dataset is never held in memory at once, use stream_clean_dataset()
-    or stream_clean_to_csv() instead.
+    for the complete dataset and causes an ≈ 2 × O(N) peak memory spike during concatenation.
+    For in-memory DataFrame construction, single-pass pd.read_csv() is preferred.
+    Chunked iteration is strictly reserved for stream_clean_to_csv() for bounded O(C) memory.
     """
     if file is None:
         raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
@@ -574,17 +574,19 @@ def analyze_dataset(
     file: object,
     strategy: Union[str, Dict[str, str]] = "mean",
     chunksize: Optional[int] = DEFAULT_CHUNKSIZE,
+    compute_summary: bool = True,
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
     """
     Ingest, clean, and compute comprehensive statistical data science summaries.
-    Supports chunked ingestion batching via `chunksize` and customizable
-    missing value imputation strategies via `strategy` (Law 2).
+    Constructs in-memory DataFrame directly via single-pass pd.read_csv to minimize memory overhead.
+    Supports customizable missing value imputation strategies via `strategy` (Law 2).
     Adheres strictly to Law 2 (cleaning integrity) and Law 3 (return contract).
 
     Note on memory complexity:
-    The analysis phase and return contract require the full DataFrame in memory (O(N))
-    to compute global statistics and enable downstream visualization. For bounded
-    O(C) memory operations, use stream_clean_to_csv().
+    In-memory DataFrame construction is performed in a single pass via pd.read_csv()
+    to eliminate the ≈ 2 × O(N) peak memory overhead from chunk list accumulation and pd.concat().
+    Chunked streaming is strictly reserved for stream_clean_to_csv() where chunks are flushed
+    directly to the output stream and freed in bounded O(C) memory.
     """
     try:
         if isinstance(strategy, int):
@@ -604,22 +606,40 @@ def analyze_dataset(
 
         if isinstance(file, pd.DataFrame):
             raw_df = file.copy()
-            if raw_df.empty:
+        elif isinstance(file, bytes):
+            if not file or len(file.strip()) == 0:
                 raise ValueError("The uploaded CSV file is empty.")
-        elif chunksize is not None and chunksize > 0:
-            raw_df = read_csv_chunked(file, chunksize=chunksize)
+            raw_df = pd.read_csv(io.BytesIO(file))
         else:
             raw_df = pd.read_csv(file)
-            if raw_df.empty:
-                raise ValueError("The uploaded CSV file is empty.")
+
+        if raw_df.empty:
+            raise ValueError("The uploaded CSV file is empty.")
 
         col_types = detect_column_types(raw_df)
+        if not compute_summary:
+            return raw_df, {"column_types": col_types}, None
+
         df = impute_missing_values(raw_df, strategy=actual_strategy)
         summary = generate_summary(df)
         summary["column_types"] = col_types
         return df, summary, None
     except Exception as e:
         return None, None, str(e)
+
+
+def load_dataset(
+    file: object,
+) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
+    """
+    Ingest a CSV tabular dataset, parse it into a DataFrame, and detect column types.
+    Delegates to analyze_dataset without running full statistical summary computation.
+    Fulfills Law 3 contract: returns (df, summary, error).
+    """
+    if isinstance(file, (bytes, bytearray)):
+        if not file or len(file.strip()) == 0:
+            return None, None, "The uploaded CSV file is empty."
+    return analyze_dataset(file, compute_summary=False)
 
 
 def create_synthetic_benchmark_csv(n_rows: int = 20_000) -> bytes:

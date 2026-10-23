@@ -312,6 +312,17 @@ class TestVisualizations(unittest.TestCase):
         self.assertIsNone(summary)
         self.assertEqual(err, "The uploaded CSV file is empty.")
 
+    def test_load_dataset_delegates_to_analyzer(self):
+        """main.load_dataset should delegate ingestion to analyzer module."""
+        from unittest.mock import patch
+        import main
+
+        csv_bytes = b"a,b\n1,2\n"
+        with patch("main.analyzer_load_dataset") as mock_ingest:
+            mock_ingest.return_value = (pd.DataFrame({"a": [1], "b": [2]}), {"column_types": {"a": "continuous", "b": "continuous"}}, None)
+            df, summary, err = main.load_dataset(csv_bytes)
+            mock_ingest.assert_called_once_with(csv_bytes)
+
     def test_render_imputation_drift_benchmark_handles_raw_unimputed_df(self):
         """render_imputation_drift_benchmark runs benchmark on raw un-imputed data when clicked."""
         from unittest.mock import patch

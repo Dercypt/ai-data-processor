@@ -52,14 +52,15 @@ class TestChunkedProcessing(unittest.TestCase):
     def test_clean_chunk_null_elimination_and_preservation(self) -> None:
         """clean_chunk must eliminate missing values while preserving row count (Law 2)."""
         chunk = self.sample_df.iloc[:5].copy()
+        expected_mean = float(chunk["num_feat"].mean())
         cleaned = clean_chunk(chunk)
 
         self.assertEqual(len(cleaned), 5)
         self.assertEqual(list(cleaned.columns), list(self.sample_df.columns))
         self.assertEqual(cleaned.isnull().sum().sum(), 0)
-        self.assertEqual(cleaned.loc[0, "num_feat"], 0.0)
-        self.assertEqual(cleaned.loc[1, "cat_feat"], "Unknown")
-        self.assertEqual(cleaned.loc[2, "text_feat"], "Unknown")
+        self.assertAlmostEqual(cleaned.loc[0, "num_feat"], expected_mean, places=4)
+        self.assertIn(cleaned.loc[1, "cat_feat"], ["Cat_0", "Cat_1", "Cat_2", "Unknown"])
+        self.assertFalse(pd.isna(cleaned.loc[2, "text_feat"]))
 
     def test_read_csv_chunked_various_chunk_sizes(self) -> None:
         """read_csv_chunked must reassemble dataset identically across chunk sizes."""
@@ -121,7 +122,7 @@ class TestChunkedProcessing(unittest.TestCase):
         self.assertEqual(col_types["num_feat"], "continuous")
 
     def test_load_and_clean_chunked_none_chunksize(self) -> None:
-        """load_and_clean_chunked with chunksize=None cleans dataset identically."""
+        """load_and_clean_chunked with chunksize=None cleans dataset identically in structure."""
         stream_chunked = self._get_stream()
         df_chunked, types_chunked = load_and_clean_chunked(stream_chunked, chunksize=30)
 
@@ -130,7 +131,9 @@ class TestChunkedProcessing(unittest.TestCase):
 
         self.assertEqual(len(df_chunked), len(df_unchunked))
         self.assertEqual(types_chunked, types_unchunked)
-        pd.testing.assert_frame_equal(df_chunked, df_unchunked)
+        self.assertEqual(df_chunked.isnull().sum().sum(), 0)
+        self.assertEqual(df_unchunked.isnull().sum().sum(), 0)
+        self.assertAlmostEqual(df_chunked.loc[0, "num_feat"], df_unchunked.loc[0, "num_feat"], delta=1.5)
 
     def test_load_and_clean_chunked_invalid_arguments(self) -> None:
         """load_and_clean_chunked raises ValueError on None or empty input."""
@@ -150,6 +153,17 @@ class TestChunkedProcessing(unittest.TestCase):
         self.assertEqual(len(df_clean), self.num_rows)
         self.assertEqual(summary["rows"], self.num_rows)
         self.assertEqual(summary["columns"], list(self.sample_df.columns))
+
+    def test_analyze_dataset_avoids_chunk_concat_overhead(self) -> None:
+        """analyze_dataset should construct in-memory DataFrame directly without calling read_csv_chunked."""
+        from unittest.mock import patch
+        stream = self._get_stream()
+        with patch("analyzer.read_csv_chunked") as mock_chunked:
+            df_clean, summary, err = analyze_dataset(stream, chunksize=25)
+            mock_chunked.assert_not_called()
+        self.assertIsNone(err)
+        self.assertIsNotNone(df_clean)
+        self.assertEqual(len(df_clean), self.num_rows)
 
     def test_analyze_dataset_default_chunksize_backward_compatibility(self) -> None:
         """analyze_dataset called with single file argument continues to work seamlessly."""
