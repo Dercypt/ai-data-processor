@@ -205,6 +205,102 @@ class TestVisualizations(unittest.TestCase):
         self.assertIn("dataset_summary", mock_st.session_state)
         self.assertEqual(mock_st.session_state["dataset_summary"], summary_out)
 
+    def test_render_preprocessing_pipeline_gates_mean_median_for_non_numeric_continuous(self):
+        """Object column detected as continuous must not offer Mean/Median options."""
+        raw_df = pd.DataFrame({
+            "num_str_col": ["10", "20", "30", "40", np.nan],
+            "pure_num_col": [1.0, 2.0, 3.0, 4.0, np.nan],
+        })
+        detected = {
+            "num_str_col": "continuous",
+            "pure_num_col": "continuous",
+        }
+
+        mock_st.radio.return_value = "Per-Column Strategy"
+        options_recorded = {}
+
+        def fake_selectbox(label, options, key=None):
+            options_recorded[key] = options
+            return options[0]
+
+        mock_st.selectbox.side_effect = fake_selectbox
+        try:
+            visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(options_recorded.get("col_impute_num_str_col"), ["Mode", "Drop"])
+            self.assertEqual(
+                options_recorded.get("col_impute_pure_num_col"),
+                ["Mean", "Median", "Mode", "Drop"],
+            )
+        finally:
+            mock_st.selectbox.side_effect = None
+
+    def test_render_preprocessing_pipeline_suppresses_success_banner_on_imputation_error(self):
+        """When impute_missing_values raises an error, success confirmation must never be rendered."""
+        from unittest.mock import patch
+
+        raw_df = pd.DataFrame({"col_a": [1.0, np.nan, 3.0]})
+        detected = {"col_a": "continuous"}
+
+        # 1. Per-Column Strategy failure
+        mock_st.radio.return_value = "Per-Column Strategy"
+        mock_st.selectbox.return_value = "Mean"
+
+        with patch("visualizations.impute_missing_values", side_effect=ValueError("Cannot apply mean")):
+            df_out, _ = visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(len(df_out), 3)
+
+        mock_st.error.assert_called_with("Imputation failed: Cannot apply mean")
+        for call in mock_st.success.call_args_list:
+            arg = call[0][0] if call[0] else ""
+            self.assertNotIn("All missing values resolved", str(arg))
+            self.assertNotIn("Row count preserved", str(arg))
+
+        # Reset mocks
+        mock_st.reset_mock()
+        mock_st.session_state = {}
+
+        # 2. Global Strategy failure
+        mock_st.radio.return_value = "Global Strategy"
+        mock_st.selectbox.return_value = "Drop"
+
+        with patch("visualizations.impute_missing_values", side_effect=ValueError("Dropping missing values resulted in an empty dataset.")):
+            df_out_global, _ = visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(len(df_out_global), 3)
+
+        mock_st.error.assert_called_with("Imputation failed: Dropping missing values resulted in an empty dataset.")
+        for call in mock_st.success.call_args_list:
+            arg = call[0][0] if call[0] else ""
+            self.assertNotIn("All missing values resolved", str(arg))
+            self.assertNotIn("Row count preserved", str(arg))
+
+    def test_render_preprocessing_pipeline_numeric_string_continuous_end_to_end(self):
+        """End-to-end edge case: object column with >=90% numeric strings and stray N/A string."""
+        from analyzer import detect_column_types
+
+        raw_df = pd.DataFrame({
+            "col_mixed": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "N/A", np.nan],
+        })
+        detected = detect_column_types(raw_df)
+        self.assertEqual(detected["col_mixed"], "continuous")
+        self.assertFalse(pd.api.types.is_numeric_dtype(raw_df["col_mixed"]))
+
+        mock_st.radio.return_value = "Per-Column Strategy"
+        options_recorded = {}
+
+        def fake_selectbox(label, options, key=None):
+            options_recorded[key] = options
+            return "Mode"
+
+        mock_st.selectbox.side_effect = fake_selectbox
+        try:
+            df_out, summary = visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(options_recorded.get("col_impute_col_mixed"), ["Mode", "Drop"])
+            mock_st.error.assert_not_called()
+            mock_st.success.assert_called()
+            self.assertEqual(int(df_out["col_mixed"].isnull().sum()), 0)
+        finally:
+            mock_st.selectbox.side_effect = None
+
     def test_render_structured_insights(self):
         """render_structured_insights should render summary, risks, and recommendations."""
         insights_dict = {
