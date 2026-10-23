@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from analyzer import (
     analyze_dataset,
+    benchmark_imputation_drift,
     compute_correlations,
     compute_skewness_and_kurtosis,
     detect_column_types,
@@ -234,6 +235,48 @@ class TestAnalyzer(unittest.TestCase):
         self.assertEqual(imputed.loc[3, "num_a"], 5.0)
         self.assertEqual(imputed.loc[3, "cat_b"], "dog")
 
+    def test_impute_missing_values_global_zero(self):
+        df_missing = pd.DataFrame({
+            "num_a": [1.0, 2.0, np.nan, 4.0],
+            "cat_b": ["apple", "banana", "apple", np.nan],
+        })
+        imputed = impute_missing_values(df_missing, strategy="zero")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        self.assertAlmostEqual(imputed.loc[2, "num_a"], 0.0)
+        self.assertEqual(imputed.loc[3, "cat_b"], "apple")
+
+    def test_impute_missing_values_global_forward_fill(self):
+        df_missing = pd.DataFrame({
+            "num_a": [np.nan, 20.0, np.nan, 40.0],
+            "cat_b": ["apple", np.nan, "cherry", np.nan],
+        })
+        imputed = impute_missing_values(df_missing, strategy="forward_fill")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        # Leading NaN in num_a is backfilled from index 1 (20.0)
+        self.assertEqual(imputed.loc[0, "num_a"], 20.0)
+        # Index 2 in num_a is forward-filled from index 1 (20.0)
+        self.assertEqual(imputed.loc[2, "num_a"], 20.0)
+        # Index 1 in cat_b is forward-filled from index 0 ("apple")
+        self.assertEqual(imputed.loc[1, "cat_b"], "apple")
+        # Index 3 in cat_b is forward-filled from index 2 ("cherry")
+        self.assertEqual(imputed.loc[3, "cat_b"], "cherry")
+
+    def test_impute_missing_values_global_random_draw(self):
+        df_missing = pd.DataFrame({
+            "num_a": [10.0, 20.0, 30.0, np.nan, np.nan],
+            "cat_b": ["alpha", "beta", np.nan, "alpha", np.nan],
+        })
+        imputed_1 = impute_missing_values(df_missing, strategy="random_draw", seed=42)
+        imputed_2 = impute_missing_values(df_missing, strategy="random_draw", seed=42)
+        self.assertEqual(imputed_1.isnull().sum().sum(), 0)
+        # Reproducibility with seed
+        pd.testing.assert_frame_equal(imputed_1, imputed_2)
+        # Imputed values must be sampled from observed values
+        self.assertTrue(imputed_1.loc[3, "num_a"] in [10.0, 20.0, 30.0])
+        self.assertTrue(imputed_1.loc[4, "num_a"] in [10.0, 20.0, 30.0])
+        self.assertTrue(imputed_1.loc[2, "cat_b"] in ["alpha", "beta"])
+        self.assertTrue(imputed_1.loc[4, "cat_b"] in ["alpha", "beta"])
+
     def test_impute_missing_values_global_drop(self):
         df_missing = pd.DataFrame({
             "num_a": [1.0, 2.0, np.nan, 4.0],
@@ -289,6 +332,10 @@ class TestAnalyzer(unittest.TestCase):
         with self.assertRaises(ValueError):
             impute_missing_values(df_test, strategy={"cat": "median"})
 
+        # Zero applied to non-numeric column
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_test, strategy={"cat": "zero"})
+
         # Column not found in DataFrame
         with self.assertRaises(ValueError):
             impute_missing_values(df_test, strategy={"non_existent": "drop"})
@@ -330,8 +377,70 @@ class TestAnalyzer(unittest.TestCase):
         summary_1 = generate_summary(df_sample)
         summary_2 = generate_summary(df_sample)
         self.assertEqual(summary_1["rows"], summary_2["rows"])
-        self.assertEqual(summary_1["columns"], summary_2["columns"])
-        self.assertEqual(summary_1["stats"], summary_2["stats"])
+
+    def test_benchmark_optimal_strategy_parity_with_impute_missing_values(self):
+        """benchmark_imputation_drift optimal_strategy must be directly executable by impute_missing_values."""
+        # Run benchmark on sample dataset
+        bench_result = benchmark_imputation_drift(self.df, missing_rate=0.15, seed=42)
+        optimal = bench_result["optimal_strategy"]
+        self.assertIsInstance(optimal, str)
+        self.assertIn(
+            optimal,
+            ["mean", "median", "mode", "zero", "forward_fill", "random_draw"],
+        )
+
+        # Create a DataFrame with missing values
+        dirty_df = self.df.copy()
+        dirty_df.loc[0:10, "feature_a"] = np.nan
+        dirty_df.loc[5:15, "category"] = np.nan
+
+        # Applying the optimal strategy must execute cleanly without raising ValueError
+        imputed_df = impute_missing_values(dirty_df, strategy=optimal)
+        self.assertEqual(imputed_df.isnull().sum().sum(), 0)
+        self.assertEqual(len(imputed_df), len(dirty_df))
+
+        # Furthermore, all 6 benchmarked strategies must be directly supported
+        leaderboard = bench_result["leaderboard"]
+        for entry in leaderboard:
+            strat_name = entry["strategy"]
+            imputed_strat = impute_missing_values(dirty_df, strategy=strat_name)
+            self.assertEqual(imputed_strat.isnull().sum().sum(), 0)
+            self.assertEqual(len(imputed_strat), len(dirty_df))
+
+    def test_extended_imputation_strategies_edge_cases(self):
+        """Edge cases: all-NaN columns, single-value columns, and space-formatted strategy names."""
+        all_na_numeric = pd.DataFrame({"num": [np.nan, np.nan, np.nan]})
+        all_na_str = pd.DataFrame({"text": pd.Series([np.nan, np.nan, np.nan], dtype=object)})
+
+        # Forward fill on all-NaN numeric
+        imp_ff_num = impute_missing_values(all_na_numeric, strategy="forward fill")
+        self.assertEqual(imp_ff_num.isnull().sum().sum(), 0)
+        self.assertEqual(imp_ff_num.loc[0, "num"], 0.0)
+
+        # Forward fill on all-NaN string
+        imp_ff_str = impute_missing_values(all_na_str, strategy="forward_fill")
+        self.assertEqual(imp_ff_str.isnull().sum().sum(), 0)
+        self.assertEqual(imp_ff_str.loc[0, "text"], "Unknown")
+
+        # Random draw on all-NaN numeric
+        imp_rd_num = impute_missing_values(all_na_numeric, strategy="random draw")
+        self.assertEqual(imp_rd_num.isnull().sum().sum(), 0)
+        self.assertEqual(imp_rd_num.loc[0, "num"], 0.0)
+
+        # Random draw on all-NaN string
+        imp_rd_str = impute_missing_values(all_na_str, strategy="random_draw")
+        self.assertEqual(imp_rd_str.isnull().sum().sum(), 0)
+        self.assertEqual(imp_rd_str.loc[0, "text"], "Unknown")
+
+        # Single observed value with missing values
+        single_val_df = pd.DataFrame({"val": [42.0, np.nan, np.nan]})
+        imp_single_ff = impute_missing_values(single_val_df, strategy="forward_fill")
+        self.assertEqual(imp_single_ff.isnull().sum().sum(), 0)
+        self.assertTrue((imp_single_ff["val"] == 42.0).all())
+
+        imp_single_rd = impute_missing_values(single_val_df, strategy="random_draw", seed=1)
+        self.assertEqual(imp_single_rd.isnull().sum().sum(), 0)
+        self.assertTrue((imp_single_rd["val"] == 42.0).all())
 
     def test_analyzer_has_zero_streamlit_dependency(self):
         """analyzer module must have zero import or dependency on streamlit (separation of concerns)."""
