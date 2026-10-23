@@ -4,7 +4,11 @@ import streamlit as st
 import pandas as pd
 from typing import Dict, Optional, Tuple
 
-from analyzer import detect_column_types
+from analyzer import (
+    analyze_dataset,
+    detect_column_types,
+    load_dataset as analyzer_load_dataset,
+)
 from llm_service import get_ai_insights
 from database import (
     init_db,
@@ -80,19 +84,8 @@ def get_current_user_id() -> Optional[int]:
 def load_dataset(
     file_bytes: bytes,
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
-    """Ingest CSV tabular dataset and detect column types with caching."""
-    if not file_bytes or len(file_bytes.strip()) == 0:
-        return None, None, "The uploaded CSV file is empty."
-    try:
-        buffer = io.BytesIO(file_bytes)
-        df = pd.read_csv(buffer)
-        if df.empty:
-            return None, None, "The uploaded CSV file is empty."
-        col_types = detect_column_types(df)
-        summary: Dict[str, object] = {"column_types": col_types}
-        return df, summary, None
-    except Exception as e:
-        return None, None, str(e)
+    """Ingest CSV tabular dataset and detect column types via analyzer with caching."""
+    return analyzer_load_dataset(file_bytes)
 
 
 # --- SIDEBAR: AUTHENTICATION & WORKSPACE ---

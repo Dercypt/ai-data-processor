@@ -574,11 +574,12 @@ def analyze_dataset(
     file: object,
     strategy: Union[str, Dict[str, str]] = "mean",
     chunksize: Optional[int] = DEFAULT_CHUNKSIZE,
+    compute_summary: bool = True,
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
     """
     Ingest, clean, and compute comprehensive statistical data science summaries.
-    Supports chunked ingestion batching via `chunksize` and customizable
-    missing value imputation strategies via `strategy` (Law 2).
+    Constructs in-memory DataFrame directly via single-pass pd.read_csv to minimize memory overhead.
+    Supports customizable missing value imputation strategies via `strategy` (Law 2).
     Adheres strictly to Law 2 (cleaning integrity) and Law 3 (return contract).
 
     Note on memory complexity:
@@ -615,12 +616,29 @@ def analyze_dataset(
             raise ValueError("The uploaded CSV file is empty.")
 
         col_types = detect_column_types(raw_df)
+        if not compute_summary:
+            return raw_df, {"column_types": col_types}, None
+
         df = impute_missing_values(raw_df, strategy=actual_strategy)
         summary = generate_summary(df)
         summary["column_types"] = col_types
         return df, summary, None
     except Exception as e:
         return None, None, str(e)
+
+
+def load_dataset(
+    file: object,
+) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
+    """
+    Ingest a CSV tabular dataset, parse it into a DataFrame, and detect column types.
+    Delegates to analyze_dataset without running full statistical summary computation.
+    Fulfills Law 3 contract: returns (df, summary, error).
+    """
+    if isinstance(file, (bytes, bytearray)):
+        if not file or len(file.strip()) == 0:
+            return None, None, "The uploaded CSV file is empty."
+    return analyze_dataset(file, compute_summary=False)
 
 
 def create_synthetic_benchmark_csv(n_rows: int = 20_000) -> bytes:

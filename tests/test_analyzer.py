@@ -19,6 +19,7 @@ from analyzer import (
     impute_missing_values,
     interpret_skewness,
     interpret_kurtosis,
+    load_dataset,
 )
 
 
@@ -340,6 +341,36 @@ class TestAnalyzer(unittest.TestCase):
         with open(analyzer.__file__, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertNotIn("streamlit", content)
+
+    def test_load_dataset_success(self):
+        """load_dataset should parse valid tabular dataset and detect column types."""
+        csv_bytes = b"col1,col2\n1.0,10\n2.0,20\n"
+        df, summary, err = load_dataset(csv_bytes)
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(summary)
+        self.assertEqual(len(df), 2)
+        self.assertIn("column_types", summary)
+        self.assertEqual(summary["column_types"]["col1"], "continuous")
+
+    def test_load_dataset_empty_file(self):
+        """load_dataset should return domain error on empty input bytes or streams."""
+        df, summary, err = load_dataset(b"")
+        self.assertIsNone(df)
+        self.assertIsNone(summary)
+        self.assertEqual(err, "The uploaded CSV file is empty.")
+
+    def test_load_dataset_delegates_to_analyze_dataset(self):
+        """load_dataset should delegate to analyze_dataset without generating full summary."""
+        from unittest.mock import patch
+        csv_bytes = b"x,y\n1,2\n3,4\n"
+        with patch("analyzer.generate_summary") as mock_gen_summary:
+            df, summary, err = load_dataset(csv_bytes)
+            mock_gen_summary.assert_not_called()
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertIn("column_types", summary)
+        self.assertNotIn("dependency_graph", summary)
 
 
 if __name__ == "__main__":
