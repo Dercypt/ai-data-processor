@@ -16,7 +16,7 @@ Autonomous execution must immediately pause and prompt the user for confirmation
      - `src/llm_service.py`: `get_ai_insights(summary)`
      - `src/database.py`: `init_db()`, `save_entry(filename, insights)`, `get_all_entries()`, `delete_entry(entry_id)`
 3. **Altering Database Migration & Storage Schemas:**
-   - Any change to the Google Sheets columnar schema (`timestamp`, `filename`, `insights`), column ordering, or table definition.
+   - Any change to the SQLite relational schema (`users`: `id`, `username`, `password_hash`, `created_at`; `history`: `id`, `user_id`, `timestamp`, `filename`, `insights`), column ordering, foreign key constraints, or table definitions.
 
 ---
 

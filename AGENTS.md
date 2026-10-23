@@ -35,7 +35,7 @@ flowchart TD
 
 ### Phase 1: Constraint Verification
 * Read [`LAWS.md`](LAWS.md). Ensure the planned modification does not violate Laws 1 through 5.
-* **Strict Immutability:** Never modify or delete `LAWS.md` or any file within `tests/laws/`.
+* **Strict Immutability:** Never modify or delete `LAWS.md` or core verification suites within `tests/` without human authorization.
 * Check [`PRINCIPLES.md`](PRINCIPLES.md) escalation triggers. If the task introduces external dependencies, changes public API contracts, or alters DB schemas, stop and ask the user for approval before modifying code.
 
 ### Phase 2: Implementation & Code Defaults
