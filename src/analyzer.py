@@ -445,18 +445,18 @@ def generate_summary(
     return summary
 
 
-def clean_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
+def clean_chunk(
+    chunk: pd.DataFrame,
+    strategy: Union[str, Dict[str, str]] = "mean",
+) -> pd.DataFrame:
     """
     Clean a single DataFrame chunk by eliminating missing values without dropping rows (Law 2).
-    Numeric features are imputed with 0, non-numeric with 'Unknown'.
+    Imputes numeric features using the arithmetic mean by default (matching impute_missing_values)
+    and non-numeric features with mode or 'Unknown'.
     """
-    cleaned = chunk.copy()
-    for col in cleaned.columns:
-        if pd.api.types.is_numeric_dtype(cleaned[col]):
-            cleaned[col] = cleaned[col].fillna(0)
-        else:
-            cleaned[col] = cleaned[col].fillna("Unknown")
-    return cleaned
+    if chunk.empty:
+        return chunk.copy()
+    return impute_missing_values(chunk, strategy=strategy)
 
 
 def read_csv_chunked(
