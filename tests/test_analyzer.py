@@ -234,6 +234,16 @@ class TestAnalyzer(unittest.TestCase):
         self.assertEqual(imputed.loc[3, "num_a"], 5.0)
         self.assertEqual(imputed.loc[3, "cat_b"], "dog")
 
+    def test_impute_missing_values_global_zero(self):
+        df_missing = pd.DataFrame({
+            "num_a": [1.0, 2.0, np.nan, 4.0],
+            "cat_b": ["apple", "banana", "apple", np.nan],
+        })
+        imputed = impute_missing_values(df_missing, strategy="zero")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        self.assertAlmostEqual(imputed.loc[2, "num_a"], 0.0)
+        self.assertEqual(imputed.loc[3, "cat_b"], "apple")
+
     def test_impute_missing_values_global_drop(self):
         df_missing = pd.DataFrame({
             "num_a": [1.0, 2.0, np.nan, 4.0],
@@ -288,6 +298,10 @@ class TestAnalyzer(unittest.TestCase):
         # Median applied to non-numeric column
         with self.assertRaises(ValueError):
             impute_missing_values(df_test, strategy={"cat": "median"})
+
+        # Zero applied to non-numeric column
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_test, strategy={"cat": "zero"})
 
         # Column not found in DataFrame
         with self.assertRaises(ValueError):
