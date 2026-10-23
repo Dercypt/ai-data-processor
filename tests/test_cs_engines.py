@@ -157,6 +157,138 @@ class TestHeuristicRuleEngine(unittest.TestCase):
         self.assertEqual(result["total_anomalies"], 0)
         self.assertEqual(result["anomalous_indices"], [])
 
+    def test_evaluate_heuristic_rules_attribution_pruning(self) -> None:
+        """Verify only anomalous rows crossing the threshold receive attribution entries."""
+        np.random.seed(42)
+        n = 500
+        df = pd.DataFrame({
+            "val_a": np.random.normal(10.0, 1.0, size=n),
+            "val_b": np.random.normal(20.0, 1.0, size=n),
+        })
+        # Inject exactly two extreme outliers
+        df.loc[7, "val_a"] = 150.0
+        df.loc[99, "val_a"] = 180.0
+
+        result = evaluate_heuristic_rules(df)
+        anomalous_indices = result["anomalous_indices"]
+        self.assertIn(7, anomalous_indices)
+        self.assertIn(99, anomalous_indices)
+
+        # Attribution dictionary must only contain keys for anomalous rows, not all 500 rows
+        attributions = result["record_attributions"]
+        self.assertLessEqual(len(attributions), len(anomalous_indices))
+        for key in attributions.keys():
+            self.assertIn(key, anomalous_indices)
+
+    def test_evaluate_heuristic_rules_vectorized_scoring_parity(self) -> None:
+        """Verify vectorized composite scores and severe rule thresholding match exact mathematical weights."""
+        df = pd.DataFrame({
+            "feature_x": [10.0, 20.0, 30.0, 5.0, 15.0],
+            "feature_y": [1.0, 2.0, 3.0, 4.0, 5.0],
+        })
+        rule_a = HeuristicRule(
+            rule_id="RULE_A",
+            name="Rule A",
+            description="Feature X > 25",
+            severity=0.60,
+            rule_type="test",
+            features=["feature_x"],
+            predicate=lambda d: d["feature_x"] > 25.0,
+        )
+        rule_b = HeuristicRule(
+            rule_id="RULE_B",
+            name="Rule B",
+            description="Feature Y <= 2",
+            severity=0.40,
+            rule_type="test",
+            features=["feature_y"],
+            predicate=lambda d: d["feature_y"] <= 2.0,
+        )
+        # Total weight = 0.60 + 0.40 = 1.0
+        # Row 0: feature_x=10, feature_y=1 -> violates B -> weight 0.40 -> score 0.40 (>= 0.20)
+        # Row 1: feature_x=20, feature_y=2 -> violates B -> weight 0.40 -> score 0.40 (>= 0.20)
+        # Row 2: feature_x=30, feature_y=3 -> violates A -> weight 0.60 -> score 0.60 (>= 0.20)
+        # Row 3: feature_x=5,  feature_y=4 -> violates neither -> weight 0.0 -> score 0.0 (< 0.20)
+        # Row 4: feature_x=15, feature_y=5 -> violates neither -> weight 0.0 -> score 0.0 (< 0.20)
+        result = evaluate_heuristic_rules(df, rules=[rule_a, rule_b])
+        self.assertEqual(result["total_anomalies"], 3)
+        self.assertEqual(result["anomalous_indices"], [0, 1, 2])
+
+        top_scores = {r["index"]: r["composite_score"] for r in result["top_anomalies"]}
+        self.assertEqual(top_scores[2], 0.60)
+        self.assertEqual(top_scores[0], 0.40)
+        self.assertEqual(top_scores[1], 0.40)
+
+    def test_evaluate_heuristic_rules_throughput_large_dataframe(self) -> None:
+        """Verify evaluate_heuristic_rules handles large datasets efficiently without O(N) dict overhead."""
+        np.random.seed(42)
+        n = 10_000
+        large_df = pd.DataFrame({
+            "col_a": np.random.normal(50.0, 5.0, size=n),
+            "col_b": np.random.normal(100.0, 10.0, size=n),
+        })
+        large_df.loc[5, "col_a"] = 500.0
+        result = evaluate_heuristic_rules(large_df)
+        self.assertGreater(result["total_rules"], 0)
+        self.assertGreater(result["total_anomalies"], 0)
+        self.assertIn(5, result["anomalous_indices"])
+        self.assertLess(len(result["record_attributions"]), 51)
+
+    def test_evaluate_heuristic_rules_edge_cases(self) -> None:
+        """Verify edge cases: non-integer string indices, faulty predicate containment, and zero anomalies."""
+        # 1. Non-integer string indices
+        df_str_idx = pd.DataFrame(
+            {"val": [10.0, 20.0, 1000.0]},
+            index=["rec_alpha", "rec_beta", "rec_gamma"],
+        )
+        rule = HeuristicRule(
+            rule_id="RULE_HIGH",
+            name="High Value",
+            description="val > 100",
+            severity=0.90,
+            rule_type="test",
+            features=["val"],
+            predicate=lambda d: d["val"] > 100.0,
+        )
+        res_str = evaluate_heuristic_rules(df_str_idx, rules=[rule])
+        self.assertEqual(res_str["total_anomalies"], 1)
+        self.assertEqual(res_str["anomalous_indices"], ["rec_gamma"])
+        self.assertIn("rec_gamma", res_str["record_attributions"])
+
+        # 2. Faulty rule predicate containment (swallows exception without crashing)
+        def faulty_pred(d: pd.DataFrame) -> pd.Series:
+            raise RuntimeError("Corrupted predicate logic")
+
+        bad_rule = HeuristicRule(
+            rule_id="RULE_BAD",
+            name="Bad Rule",
+            description="Throws error",
+            severity=0.50,
+            rule_type="test",
+            features=["val"],
+            predicate=faulty_pred,
+        )
+        res_faulty = evaluate_heuristic_rules(df_str_idx, rules=[bad_rule, rule])
+        self.assertEqual(res_faulty["total_anomalies"], 1)
+        self.assertEqual(res_faulty["anomalous_indices"], ["rec_gamma"])
+
+        # 3. Zero anomalies scenario
+        clean_df = pd.DataFrame({"val": [1.0, 2.0, 3.0]})
+        untriggered_rule = HeuristicRule(
+            rule_id="RULE_UNTRIGGERED",
+            name="Never True",
+            description="val > 9999",
+            severity=0.50,
+            rule_type="test",
+            features=["val"],
+            predicate=lambda d: d["val"] > 9999.0,
+        )
+        res_zero = evaluate_heuristic_rules(clean_df, rules=[untriggered_rule])
+        self.assertEqual(res_zero["total_anomalies"], 0)
+        self.assertEqual(res_zero["anomalous_indices"], [])
+        self.assertEqual(res_zero["record_attributions"], {})
+        self.assertEqual(res_zero["top_anomalies"], [])
+
 
 class TestImputationDriftBenchmark(unittest.TestCase):
     def setUp(self) -> None:
