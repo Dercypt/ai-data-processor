@@ -1281,8 +1281,9 @@ def evaluate_heuristic_rules(
     """
     Evaluate declarative heuristic domain rules across dataset.
     Provides explainable anomaly attribution:
-    - Composite anomaly score per record based on weighted rule violations
-    - Rule-by-rule violation diagnostics and attribution
+    - Vectorized composite anomaly score per record based on weighted rule violations
+    - Evaluates rule predicates vectorially across DataFrame columns, eliminating O(N) row iteration
+    - Only constructs attribution dictionaries for anomalous records crossing the threshold
     - Replaces blackbox IsolationForest with explainable AI evaluation
     """
     total_rows = len(df)
@@ -1312,24 +1313,22 @@ def evaluate_heuristic_rules(
         }
 
     total_weight = sum(r.severity for r in rules)
-    row_violations: Dict[int, List[Dict[str, Union[str, float]]]] = {i: [] for i in df.index}
+    weighted_scores = pd.Series(0.0, index=df.index, dtype=float)
+    severe_mask = pd.Series(False, index=df.index, dtype=bool)
     rules_summary: List[Dict[str, Union[str, int, float]]] = []
+    active_rules_and_masks: List[Tuple[HeuristicRule, pd.Series]] = []
 
     for rule in rules:
         try:
-            mask = rule.predicate(df).fillna(False)
-            violating_indices = df.index[mask].tolist()
-            v_count = len(violating_indices)
-            v_pct = round((v_count / total_rows) * 100.0, 2)
+            pred_res = rule.predicate(df)
+            if not isinstance(pred_res, pd.Series):
+                pred_res = pd.Series(pred_res, index=df.index)
+            mask = pred_res.fillna(False).astype(bool)
+            if not mask.index.equals(df.index):
+                mask = mask.reindex(df.index, fill_value=False)
 
-            for idx in violating_indices:
-                row_violations[idx].append({
-                    "rule_id": rule.rule_id,
-                    "name": rule.name,
-                    "description": rule.description,
-                    "severity": rule.severity,
-                    "rule_type": rule.rule_type,
-                })
+            v_count = int(mask.sum())
+            v_pct = round((v_count / total_rows) * 100.0, 2)
 
             rules_summary.append({
                 "rule_id": rule.rule_id,
@@ -1341,30 +1340,58 @@ def evaluate_heuristic_rules(
                 "violation_count": v_count,
                 "violation_pct": v_pct,
             })
+
+            if v_count > 0:
+                weighted_scores += mask.astype(float) * rule.severity
+                if rule.severity >= 0.85:
+                    severe_mask |= mask
+                active_rules_and_masks.append((rule, mask))
         except Exception:
             continue
 
-    anomalous_indices: List[int] = []
-    scores: Dict[int, float] = {}
-    top_records: List[Dict[str, object]] = []
+    if total_weight > 0:
+        composite_scores = (weighted_scores / total_weight).round(4)
+    else:
+        composite_scores = pd.Series(0.0, index=df.index, dtype=float)
 
-    for idx, v_list in row_violations.items():
-        if not v_list:
-            scores[idx] = 0.0
+    is_anomalous = (composite_scores >= 0.20) | severe_mask
+    anomalous_mask_indices = df.index[is_anomalous]
+    anomalous_indices: List[int] = [
+        int(i) if isinstance(i, (int, np.integer)) else i for i in anomalous_mask_indices
+    ]
+
+    # Only construct attribution dictionaries for anomalous indices crossing the threshold
+    anom_violations: Dict[object, List[Dict[str, Union[str, float]]]] = {
+        i: [] for i in set(anomalous_indices)
+    }
+
+    for rule, mask in active_rules_and_masks:
+        rule_anom_mask = mask & is_anomalous
+        if not rule_anom_mask.any():
             continue
-        row_weight = sum(float(v["severity"]) for v in v_list)
-        score = round(row_weight / total_weight, 4) if total_weight > 0 else 0.0
-        scores[idx] = score
+        violating_indices = df.index[rule_anom_mask]
+        rule_dict: Dict[str, Union[str, float]] = {
+            "rule_id": rule.rule_id,
+            "name": rule.name,
+            "description": rule.description,
+            "severity": rule.severity,
+            "rule_type": rule.rule_type,
+        }
+        for idx in violating_indices:
+            key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+            anom_violations[key].append(rule_dict)
 
-        has_severe = any(float(v["severity"]) >= 0.85 for v in v_list)
-        if score >= 0.20 or has_severe:
-            anomalous_indices.append(idx)
-            top_records.append({
-                "index": idx,
-                "composite_score": score,
-                "violated_rules_count": len(v_list),
-                "violations": v_list,
-            })
+    top_records: List[Dict[str, object]] = []
+    anom_scores_series = composite_scores[is_anomalous]
+
+    for idx, score_val in zip(anomalous_indices, anom_scores_series.values):
+        v_list = anom_violations.get(idx, [])
+        top_records.append({
+            "index": idx,
+            "composite_score": float(score_val),
+            "violated_rules_count": len(v_list),
+            "violations": v_list,
+        })
 
     top_records.sort(key=lambda r: float(r["composite_score"]), reverse=True)
     count = len(anomalous_indices)
