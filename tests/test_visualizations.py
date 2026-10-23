@@ -205,6 +205,35 @@ class TestVisualizations(unittest.TestCase):
         self.assertIn("dataset_summary", mock_st.session_state)
         self.assertEqual(mock_st.session_state["dataset_summary"], summary_out)
 
+    def test_render_preprocessing_pipeline_gates_mean_median_for_non_numeric_continuous(self):
+        """Object column detected as continuous must not offer Mean/Median options."""
+        raw_df = pd.DataFrame({
+            "num_str_col": ["10", "20", "30", "40", np.nan],
+            "pure_num_col": [1.0, 2.0, 3.0, 4.0, np.nan],
+        })
+        detected = {
+            "num_str_col": "continuous",
+            "pure_num_col": "continuous",
+        }
+
+        mock_st.radio.return_value = "Per-Column Strategy"
+        options_recorded = {}
+
+        def fake_selectbox(label, options, key=None):
+            options_recorded[key] = options
+            return options[0]
+
+        mock_st.selectbox.side_effect = fake_selectbox
+        try:
+            visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(options_recorded.get("col_impute_num_str_col"), ["Mode", "Drop"])
+            self.assertEqual(
+                options_recorded.get("col_impute_pure_num_col"),
+                ["Mean", "Median", "Mode", "Drop"],
+            )
+        finally:
+            mock_st.selectbox.side_effect = None
+
     def test_render_structured_insights(self):
         """render_structured_insights should render summary, risks, and recommendations."""
         insights_dict = {

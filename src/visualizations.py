@@ -614,8 +614,9 @@ def render_preprocessing_pipeline(
             cols_ui = st.columns(min(len(missing_cols), 3))
             for idx, col_name in enumerate(missing_cols):
                 col_type = detected_types.get(col_name, "continuous")
+                is_numeric_col = pd.api.types.is_numeric_dtype(raw_df[col_name])
                 with cols_ui[idx % len(cols_ui)]:
-                    if col_type == "continuous":
+                    if col_type == "continuous" and is_numeric_col:
                         options = ["Mean", "Median", "Mode", "Drop"]
                     else:
                         options = ["Mode", "Drop"]
