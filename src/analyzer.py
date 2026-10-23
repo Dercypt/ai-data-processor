@@ -451,15 +451,39 @@ def generate_summary(
 def clean_chunk(
     chunk: pd.DataFrame,
     strategy: Union[str, Dict[str, str]] = "mean",
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> pd.DataFrame:
     """
     Clean a single DataFrame chunk by eliminating missing values without dropping rows (Law 2).
     Imputes numeric features using the arithmetic mean by default (matching impute_missing_values)
     and non-numeric features with mode or 'Unknown'.
+
+    Parameters:
+        chunk: Input DataFrame slice.
+        strategy: Imputation strategy ('mean', 'median', 'mode', or dict of column -> strategy)
+            used for window-local imputation or fallback when global fill_values are absent.
+        fill_values: Optional precomputed mapping of column names to static replacement values
+            (e.g., global means or modes computed across the complete dataset). Supplying
+            precomputed statistics ensures cross-chunk consistency and eliminates chunk-local
+            imputation drift. When omitted (None), chunk cleaning relies on window-local statistics
+            computed independently per chunk.
+
+    Returns:
+        Cleaned DataFrame chunk with zero missing values.
     """
     if chunk.empty:
         return chunk.copy()
-    return impute_missing_values(chunk, strategy=strategy)
+
+    cleaned = chunk.copy()
+    if fill_values:
+        applicable_fills = {k: v for k, v in fill_values.items() if k in cleaned.columns}
+        if applicable_fills:
+            cleaned = cleaned.fillna(value=applicable_fills)
+
+    if cleaned.isnull().any().any():
+        cleaned = impute_missing_values(cleaned, strategy=strategy)
+
+    return cleaned
 
 
 def read_csv_chunked(
@@ -498,10 +522,18 @@ def read_csv_chunked(
 def stream_clean_dataset(
     file: object,
     chunksize: int = DEFAULT_CHUNKSIZE,
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> Generator[pd.DataFrame, None, None]:
     """
     Stream-clean a tabular dataset chunk-by-chunk in strictly bounded O(C) memory.
     Yields each cleaned DataFrame chunk iteratively.
+
+    Note on Chunk-Local Imputation Drift:
+    When `fill_values` is None (default), missing values are imputed using window-local
+    statistics computed independently per chunk. This can introduce slight numerical
+    drift across chunks if the underlying data distribution varies between windows.
+    To ensure cross-chunk statistical parity, provide precomputed `fill_values` derived
+    from an initial summary or baseline pass over the dataset.
     """
     if file is None:
         raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
@@ -510,21 +542,23 @@ def stream_clean_dataset(
 
     reader = pd.read_csv(file, chunksize=chunksize)
     for chunk in reader:
-        yield clean_chunk(chunk)
+        yield clean_chunk(chunk, fill_values=fill_values)
 
 
 def stream_clean_to_csv(
     input_file: object,
     output_file: object,
     chunksize: int = DEFAULT_CHUNKSIZE,
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> int:
     """
     Stream-clean an input CSV and write directly to an output CSV file/buffer in O(C) memory.
     Returns the total number of rows processed.
+    Accepts optional precomputed `fill_values` to prevent chunk-local imputation drift.
     """
     total_rows = 0
     first_chunk = True
-    for cleaned_chunk in stream_clean_dataset(input_file, chunksize=chunksize):
+    for cleaned_chunk in stream_clean_dataset(input_file, chunksize=chunksize, fill_values=fill_values):
         cleaned_chunk.to_csv(
             output_file,
             index=False,
@@ -539,6 +573,7 @@ def stream_clean_to_csv(
 def load_and_clean_chunked(
     file: object,
     chunksize: Optional[int] = DEFAULT_CHUNKSIZE,
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
     Load and clean a tabular dataset using iterative chunked processing.
@@ -553,7 +588,7 @@ def load_and_clean_chunked(
 
     if chunksize is not None and chunksize > 0:
         cleaned_chunks: List[pd.DataFrame] = []
-        for cleaned_chunk in stream_clean_dataset(file, chunksize=chunksize):
+        for cleaned_chunk in stream_clean_dataset(file, chunksize=chunksize, fill_values=fill_values):
             cleaned_chunks.append(cleaned_chunk)
 
         if not cleaned_chunks:
@@ -564,7 +599,7 @@ def load_and_clean_chunked(
         df = pd.read_csv(file)
         if df.empty:
             raise ValueError("The uploaded CSV file is empty.")
-        df = clean_chunk(df)
+        df = clean_chunk(df, fill_values=fill_values)
 
     if df.empty:
         raise ValueError("The uploaded CSV file is empty.")
