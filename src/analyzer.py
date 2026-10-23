@@ -469,9 +469,9 @@ def read_csv_chunked(
 
     Note on memory complexity:
     Reassembling chunks into a single pd.DataFrame requires O(N) memory allocation
-    for the complete dataset. For strictly bounded O(C) memory consumption where
-    the full dataset is never held in memory at once, use stream_clean_dataset()
-    or stream_clean_to_csv() instead.
+    for the complete dataset and causes an ≈ 2 × O(N) peak memory spike during concatenation.
+    For in-memory DataFrame construction, single-pass pd.read_csv() is preferred.
+    Chunked iteration is strictly reserved for stream_clean_to_csv() for bounded O(C) memory.
     """
     if file is None:
         raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
@@ -583,9 +583,10 @@ def analyze_dataset(
     Adheres strictly to Law 2 (cleaning integrity) and Law 3 (return contract).
 
     Note on memory complexity:
-    The analysis phase and return contract require the full DataFrame in memory (O(N))
-    to compute global statistics and enable downstream visualization. For bounded
-    O(C) memory operations, use stream_clean_to_csv().
+    In-memory DataFrame construction is performed in a single pass via pd.read_csv()
+    to eliminate the ≈ 2 × O(N) peak memory overhead from chunk list accumulation and pd.concat().
+    Chunked streaming is strictly reserved for stream_clean_to_csv() where chunks are flushed
+    directly to the output stream and freed in bounded O(C) memory.
     """
     try:
         if isinstance(strategy, int):
