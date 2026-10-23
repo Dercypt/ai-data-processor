@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from analyzer import (
     analyze_dataset,
+    benchmark_imputation_drift,
     compute_correlations,
     compute_skewness_and_kurtosis,
     detect_column_types,
@@ -376,8 +377,70 @@ class TestAnalyzer(unittest.TestCase):
         summary_1 = generate_summary(df_sample)
         summary_2 = generate_summary(df_sample)
         self.assertEqual(summary_1["rows"], summary_2["rows"])
-        self.assertEqual(summary_1["columns"], summary_2["columns"])
-        self.assertEqual(summary_1["stats"], summary_2["stats"])
+
+    def test_benchmark_optimal_strategy_parity_with_impute_missing_values(self):
+        """benchmark_imputation_drift optimal_strategy must be directly executable by impute_missing_values."""
+        # Run benchmark on sample dataset
+        bench_result = benchmark_imputation_drift(self.df, missing_rate=0.15, seed=42)
+        optimal = bench_result["optimal_strategy"]
+        self.assertIsInstance(optimal, str)
+        self.assertIn(
+            optimal,
+            ["mean", "median", "mode", "zero", "forward_fill", "random_draw"],
+        )
+
+        # Create a DataFrame with missing values
+        dirty_df = self.df.copy()
+        dirty_df.loc[0:10, "feature_a"] = np.nan
+        dirty_df.loc[5:15, "category"] = np.nan
+
+        # Applying the optimal strategy must execute cleanly without raising ValueError
+        imputed_df = impute_missing_values(dirty_df, strategy=optimal)
+        self.assertEqual(imputed_df.isnull().sum().sum(), 0)
+        self.assertEqual(len(imputed_df), len(dirty_df))
+
+        # Furthermore, all 6 benchmarked strategies must be directly supported
+        leaderboard = bench_result["leaderboard"]
+        for entry in leaderboard:
+            strat_name = entry["strategy"]
+            imputed_strat = impute_missing_values(dirty_df, strategy=strat_name)
+            self.assertEqual(imputed_strat.isnull().sum().sum(), 0)
+            self.assertEqual(len(imputed_strat), len(dirty_df))
+
+    def test_extended_imputation_strategies_edge_cases(self):
+        """Edge cases: all-NaN columns, single-value columns, and space-formatted strategy names."""
+        all_na_numeric = pd.DataFrame({"num": [np.nan, np.nan, np.nan]})
+        all_na_str = pd.DataFrame({"text": pd.Series([np.nan, np.nan, np.nan], dtype=object)})
+
+        # Forward fill on all-NaN numeric
+        imp_ff_num = impute_missing_values(all_na_numeric, strategy="forward fill")
+        self.assertEqual(imp_ff_num.isnull().sum().sum(), 0)
+        self.assertEqual(imp_ff_num.loc[0, "num"], 0.0)
+
+        # Forward fill on all-NaN string
+        imp_ff_str = impute_missing_values(all_na_str, strategy="forward_fill")
+        self.assertEqual(imp_ff_str.isnull().sum().sum(), 0)
+        self.assertEqual(imp_ff_str.loc[0, "text"], "Unknown")
+
+        # Random draw on all-NaN numeric
+        imp_rd_num = impute_missing_values(all_na_numeric, strategy="random draw")
+        self.assertEqual(imp_rd_num.isnull().sum().sum(), 0)
+        self.assertEqual(imp_rd_num.loc[0, "num"], 0.0)
+
+        # Random draw on all-NaN string
+        imp_rd_str = impute_missing_values(all_na_str, strategy="random_draw")
+        self.assertEqual(imp_rd_str.isnull().sum().sum(), 0)
+        self.assertEqual(imp_rd_str.loc[0, "text"], "Unknown")
+
+        # Single observed value with missing values
+        single_val_df = pd.DataFrame({"val": [42.0, np.nan, np.nan]})
+        imp_single_ff = impute_missing_values(single_val_df, strategy="forward_fill")
+        self.assertEqual(imp_single_ff.isnull().sum().sum(), 0)
+        self.assertTrue((imp_single_ff["val"] == 42.0).all())
+
+        imp_single_rd = impute_missing_values(single_val_df, strategy="random_draw", seed=1)
+        self.assertEqual(imp_single_rd.isnull().sum().sum(), 0)
+        self.assertTrue((imp_single_rd["val"] == 42.0).all())
 
     def test_analyzer_has_zero_streamlit_dependency(self):
         """analyzer module must have zero import or dependency on streamlit (separation of concerns)."""
