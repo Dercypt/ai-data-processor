@@ -596,6 +596,7 @@ def render_preprocessing_pipeline(
         )
 
         processed_df = raw_df
+        imputation_failed = False
         if mode == "Global Strategy":
             global_opt = st.selectbox(
                 "Select Global Strategy (Mean, Median, Mode, Drop):",
@@ -606,6 +607,7 @@ def render_preprocessing_pipeline(
                 processed_df = impute_missing_values(raw_df, strategy=global_opt.lower())
                 st.info(f"Applied **{global_opt}** imputation globally across missing features.")
             except Exception as e:
+                imputation_failed = True
                 st.error(f"Imputation failed: {e}")
                 processed_df = raw_df
         else:
@@ -631,16 +633,18 @@ def render_preprocessing_pipeline(
                 processed_df = impute_missing_values(raw_df, strategy=col_strategy_map)
                 st.info("Applied per-column imputation configuration.")
             except Exception as e:
+                imputation_failed = True
                 st.error(f"Imputation failed: {e}")
                 processed_df = raw_df
 
         # Provide summary metrics after imputation
         initial_len = len(raw_df)
         final_len = len(processed_df)
-        if final_len < initial_len:
-            st.warning(f"⚠️ Row count reduced from {initial_len} to {final_len} due to row drop.")
-        else:
-            st.success(f"Row count preserved ({final_len} rows). All missing values resolved.")
+        if not imputation_failed:
+            if final_len < initial_len:
+                st.warning(f"⚠️ Row count reduced from {initial_len} to {final_len} due to row drop.")
+            else:
+                st.success(f"Row count preserved ({final_len} rows). All missing values resolved.")
 
         summary = cached_generate_summary(processed_df)
         summary["column_types"] = detected_types

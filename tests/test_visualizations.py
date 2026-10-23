@@ -234,6 +234,45 @@ class TestVisualizations(unittest.TestCase):
         finally:
             mock_st.selectbox.side_effect = None
 
+    def test_render_preprocessing_pipeline_suppresses_success_banner_on_imputation_error(self):
+        """When impute_missing_values raises an error, success confirmation must never be rendered."""
+        from unittest.mock import patch
+
+        raw_df = pd.DataFrame({"col_a": [1.0, np.nan, 3.0]})
+        detected = {"col_a": "continuous"}
+
+        # 1. Per-Column Strategy failure
+        mock_st.radio.return_value = "Per-Column Strategy"
+        mock_st.selectbox.return_value = "Mean"
+
+        with patch("visualizations.impute_missing_values", side_effect=ValueError("Cannot apply mean")):
+            df_out, _ = visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(len(df_out), 3)
+
+        mock_st.error.assert_called_with("Imputation failed: Cannot apply mean")
+        for call in mock_st.success.call_args_list:
+            arg = call[0][0] if call[0] else ""
+            self.assertNotIn("All missing values resolved", str(arg))
+            self.assertNotIn("Row count preserved", str(arg))
+
+        # Reset mocks
+        mock_st.reset_mock()
+        mock_st.session_state = {}
+
+        # 2. Global Strategy failure
+        mock_st.radio.return_value = "Global Strategy"
+        mock_st.selectbox.return_value = "Drop"
+
+        with patch("visualizations.impute_missing_values", side_effect=ValueError("Dropping missing values resulted in an empty dataset.")):
+            df_out_global, _ = visualizations.render_preprocessing_pipeline(raw_df, detected)
+            self.assertEqual(len(df_out_global), 3)
+
+        mock_st.error.assert_called_with("Imputation failed: Dropping missing values resulted in an empty dataset.")
+        for call in mock_st.success.call_args_list:
+            arg = call[0][0] if call[0] else ""
+            self.assertNotIn("All missing values resolved", str(arg))
+            self.assertNotIn("Row count preserved", str(arg))
+
     def test_render_structured_insights(self):
         """render_structured_insights should render summary, risks, and recommendations."""
         insights_dict = {
