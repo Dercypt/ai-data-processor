@@ -244,6 +244,22 @@ class TestAnalyzer(unittest.TestCase):
         self.assertAlmostEqual(imputed.loc[2, "num_a"], 0.0)
         self.assertEqual(imputed.loc[3, "cat_b"], "apple")
 
+    def test_impute_missing_values_global_forward_fill(self):
+        df_missing = pd.DataFrame({
+            "num_a": [np.nan, 20.0, np.nan, 40.0],
+            "cat_b": ["apple", np.nan, "cherry", np.nan],
+        })
+        imputed = impute_missing_values(df_missing, strategy="forward_fill")
+        self.assertEqual(imputed.isnull().sum().sum(), 0)
+        # Leading NaN in num_a is backfilled from index 1 (20.0)
+        self.assertEqual(imputed.loc[0, "num_a"], 20.0)
+        # Index 2 in num_a is forward-filled from index 1 (20.0)
+        self.assertEqual(imputed.loc[2, "num_a"], 20.0)
+        # Index 1 in cat_b is forward-filled from index 0 ("apple")
+        self.assertEqual(imputed.loc[1, "cat_b"], "apple")
+        # Index 3 in cat_b is forward-filled from index 2 ("cherry")
+        self.assertEqual(imputed.loc[3, "cat_b"], "cherry")
+
     def test_impute_missing_values_global_drop(self):
         df_missing = pd.DataFrame({
             "num_a": [1.0, 2.0, np.nan, 4.0],

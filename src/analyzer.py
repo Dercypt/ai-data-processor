@@ -277,11 +277,12 @@ def impute_missing_values(
     - 'median': Fills missing values with the median (numeric columns only).
     - 'mode': Fills missing values with the most frequent value.
     - 'zero': Fills missing values with 0.0 (numeric columns only).
+    - 'forward_fill': Fills missing values sequentially using forward fill with backward fill fallback.
     - 'drop': Drops rows containing missing values in the targeted column(s).
 
     Parameters:
         df: Input DataFrame.
-        strategy: Either a global strategy string ('mean', 'median', 'mode', 'zero', 'drop')
+        strategy: Either a global strategy string ('mean', 'median', 'mode', 'zero', 'forward_fill', 'drop')
                   or a column-to-strategy mapping dictionary.
         default_unspecified: Optional fallback strategy for columns not present in the strategy dictionary.
 
@@ -291,14 +292,14 @@ def impute_missing_values(
     if df.empty:
         return df.copy()
 
-    valid_strategies = {"mean", "median", "mode", "zero", "drop"}
+    valid_strategies = {"mean", "median", "mode", "zero", "forward_fill", "drop"}
 
     if isinstance(strategy, str):
         strat_lower = strategy.strip().lower().replace(" ", "_")
         if strat_lower not in valid_strategies:
             raise ValueError(
                 f"Invalid imputation strategy '{strategy}'. "
-                f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'drop'."
+                f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'forward_fill', 'drop'."
             )
 
         result_df = df.copy()
@@ -337,6 +338,11 @@ def impute_missing_values(
                     result_df[col] = result_df[col].fillna(fill_val)
                 else:
                     result_df[col] = result_df[col].fillna(0.0)
+            elif strat_lower == "forward_fill":
+                result_df[col] = result_df[col].ffill().bfill()
+                if result_df[col].isnull().any():
+                    fallback_val = 0.0 if is_numeric else "Unknown"
+                    result_df[col] = result_df[col].fillna(fallback_val)
             elif strat_lower == "mode":
                 mode_vals = result_df[col].mode(dropna=True)
                 if not mode_vals.empty:
@@ -359,7 +365,7 @@ def impute_missing_values(
             if strat_norm not in valid_strategies:
                 raise ValueError(
                     f"Invalid imputation strategy '{strat_val}' for column '{col_key}'. "
-                    f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'drop'."
+                    f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'forward_fill', 'drop'."
                 )
             if strat_norm in ("mean", "median", "zero") and not pd.api.types.is_numeric_dtype(result_df[col_key]):
                 raise ValueError(
@@ -373,7 +379,7 @@ def impute_missing_values(
             if default_norm not in valid_strategies:
                 raise ValueError(
                     f"Invalid default_unspecified strategy '{default_unspecified}'. "
-                    f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'drop'."
+                    f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'forward_fill', 'drop'."
                 )
             for col in result_df.columns:
                 if col not in normalized_strat:
@@ -404,6 +410,11 @@ def impute_missing_values(
                 result_df[col] = result_df[col].fillna(num_fill)
             elif strat_norm == "zero":
                 result_df[col] = result_df[col].fillna(0.0)
+            elif strat_norm == "forward_fill":
+                result_df[col] = result_df[col].ffill().bfill()
+                if result_df[col].isnull().any():
+                    fallback_val = 0.0 if is_numeric else "Unknown"
+                    result_df[col] = result_df[col].fillna(fallback_val)
             elif strat_norm == "mode":
                 mode_vals = result_df[col].mode(dropna=True)
                 if not mode_vals.empty:
