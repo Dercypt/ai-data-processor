@@ -722,11 +722,7 @@ def evaluate_memory_footprint(
     t0 = time.perf_counter()
     bio_base = io.BytesIO(csv_bytes)
     df_base = pd.read_csv(bio_base)
-    for col in df_base.columns:
-        if pd.api.types.is_numeric_dtype(df_base[col]):
-            df_base[col] = df_base[col].fillna(0)
-        else:
-            df_base[col] = df_base[col].fillna("Unknown")
+    df_base = clean_chunk(df_base)
     t1 = time.perf_counter()
     _, peak_base_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
