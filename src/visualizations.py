@@ -542,7 +542,13 @@ def render_outlier_inspector(
 
 @st.cache_data
 def cached_generate_summary(df: pd.DataFrame) -> Dict[str, object]:
-    """Presentation-layer cached wrapper for dataset summary generation."""
+    """
+    Presentation-layer cached wrapper for dataset summary generation.
+    Caches statistical metrics, correlations, graph topology, and outlier calculations
+    keyed on DataFrame contents. When users change imputation settings in
+    render_preprocessing_pipeline, recomputation leverages vectorized downstream engines
+    (including evaluate_heuristic_rules) without row-by-row Python iteration bottlenecks.
+    """
     return generate_summary(df)
 
 
@@ -553,10 +559,12 @@ def render_preprocessing_pipeline(
     """
     Render interactive Smart Preprocessing Pipeline controls:
     - Auto-detected column types (continuous, categorical, datetime, text)
-    - User-configurable imputation (Mean, Median, Mode, Drop)
+    - User-configurable imputation (Mean, Median, Mode, Zero, Forward Fill, Random Draw, Drop)
     - Type safety gating: Mean/Median options are restricted to verified numeric dtypes
       (pd.api.types.is_numeric_dtype) even if semantically detected as continuous
     - Fault containment: Prevents false-positive success banners if imputation encounters errors
+    - Responsive recomputation: Re-derives dataset summary via cached_generate_summary with
+      vectorized anomaly scoring to prevent UI lag on large CSV files
     """
     with st.expander("🛠️ Smart / Automated Preprocessing Pipeline", expanded=True):
         st.write("#### 🔍 Auto-Detected Column Types")

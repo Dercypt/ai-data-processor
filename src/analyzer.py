@@ -456,7 +456,25 @@ def generate_summary(
     df: pd.DataFrame,
     include_drift: bool = False,
 ) -> Dict[str, object]:
-    """Generate statistical summary and column type classifications for a DataFrame."""
+    """
+    Generate statistical summary and column type classifications for a DataFrame.
+
+    Downstream Analytical Engines:
+    - detect_column_types: Categorical vs continuous vs datetime vs text classification
+    - compute_correlations: Pearson correlation matrix
+    - compute_skewness_and_kurtosis: Higher-order moments and shape interpretations
+    - detect_outliers_iqr & detect_outliers_zscore: Univariate anomaly detection
+    - detect_outliers_isolation_forest: Unsupervised multivariate ensemble detection
+    - build_feature_dependency_graph: Fruchterman-Reingold spring force-directed graph
+    - evaluate_heuristic_rules: Vectorized explainable rule synthesis & attribution engine
+    - benchmark_imputation_drift: Wasserstein and PSI distribution shift evaluation (optional)
+
+    Performance & UI Re-render Optimization:
+    Downstream analytical engines are executed in vectorized NumPy/Pandas routines. In the UI,
+    this function is wrapped by `@st.cache_data cached_generate_summary`. When users modify
+    imputation dropdowns, recomputation leverages vectorized rule evaluation in
+    evaluate_heuristic_rules without row-by-row Python dictionary overhead.
+    """
     col_types = detect_column_types(df)
     corr = compute_correlations(df)
     skew_vals, kurt_vals, skew_desc, kurt_desc = compute_skewness_and_kurtosis(df)
@@ -1281,10 +1299,13 @@ def evaluate_heuristic_rules(
     """
     Evaluate declarative heuristic domain rules across dataset.
     Provides explainable anomaly attribution:
-    - Vectorized composite anomaly score per record based on weighted rule violations
-    - Evaluates rule predicates vectorially across DataFrame columns, eliminating O(N) row iteration
-    - Only constructs attribution dictionaries for anomalous records crossing the threshold
-    - Replaces blackbox IsolationForest with explainable AI evaluation
+    - Vectorized composite anomaly score per record based on weighted rule violations:
+      accumulates rule.predicate(df) * rule.severity directly into a pd.Series(0.0, index=df.index)
+    - Vectorized rule predicates eliminate O(N) Python dictionary allocations ({i: [] for i in df.index})
+      and row-by-row iteration (for idx, v_list in row_violations.items())
+    - Selective attribution pruning: attribution dictionaries and top records are constructed only
+      for anomalous indices crossing the threshold (score >= 0.20 or severity >= 0.85)
+    - Replaces blackbox IsolationForest with high-throughput explainable AI evaluation
     """
     total_rows = len(df)
     if total_rows == 0:
