@@ -493,15 +493,39 @@ def generate_summary(
 def clean_chunk(
     chunk: pd.DataFrame,
     strategy: Union[str, Dict[str, str]] = "mean",
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> pd.DataFrame:
     """
     Clean a single DataFrame chunk by eliminating missing values without dropping rows (Law 2).
     Imputes numeric features using the arithmetic mean by default (matching impute_missing_values)
     and non-numeric features with mode or 'Unknown'.
+
+    Parameters:
+        chunk: Input DataFrame slice.
+        strategy: Imputation strategy ('mean', 'median', 'mode', or dict of column -> strategy)
+            used for window-local imputation or fallback when global fill_values are absent.
+        fill_values: Optional precomputed mapping of column names to static replacement values
+            (e.g., global means or modes computed across the complete dataset). Supplying
+            precomputed statistics ensures cross-chunk consistency and eliminates chunk-local
+            imputation drift. When omitted (None), chunk cleaning relies on window-local statistics
+            computed independently per chunk.
+
+    Returns:
+        Cleaned DataFrame chunk with zero missing values.
     """
     if chunk.empty:
         return chunk.copy()
-    return impute_missing_values(chunk, strategy=strategy)
+
+    cleaned = chunk.copy()
+    if fill_values:
+        applicable_fills = {k: v for k, v in fill_values.items() if k in cleaned.columns}
+        if applicable_fills:
+            cleaned = cleaned.fillna(value=applicable_fills)
+
+    if cleaned.isnull().any().any():
+        cleaned = impute_missing_values(cleaned, strategy=strategy)
+
+    return cleaned
 
 
 def read_csv_chunked(
@@ -540,10 +564,18 @@ def read_csv_chunked(
 def stream_clean_dataset(
     file: object,
     chunksize: int = DEFAULT_CHUNKSIZE,
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> Generator[pd.DataFrame, None, None]:
     """
     Stream-clean a tabular dataset chunk-by-chunk in strictly bounded O(C) memory.
     Yields each cleaned DataFrame chunk iteratively.
+
+    Note on Chunk-Local Imputation Drift:
+    When `fill_values` is None (default), missing values are imputed using window-local
+    statistics computed independently per chunk. This can introduce slight numerical
+    drift across chunks if the underlying data distribution varies between windows.
+    To ensure cross-chunk statistical parity, provide precomputed `fill_values` derived
+    from an initial summary or baseline pass over the dataset.
     """
     if file is None:
         raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
@@ -552,21 +584,23 @@ def stream_clean_dataset(
 
     reader = pd.read_csv(file, chunksize=chunksize)
     for chunk in reader:
-        yield clean_chunk(chunk)
+        yield clean_chunk(chunk, fill_values=fill_values)
 
 
 def stream_clean_to_csv(
     input_file: object,
     output_file: object,
     chunksize: int = DEFAULT_CHUNKSIZE,
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> int:
     """
     Stream-clean an input CSV and write directly to an output CSV file/buffer in O(C) memory.
     Returns the total number of rows processed.
+    Accepts optional precomputed `fill_values` to prevent chunk-local imputation drift.
     """
     total_rows = 0
     first_chunk = True
-    for cleaned_chunk in stream_clean_dataset(input_file, chunksize=chunksize):
+    for cleaned_chunk in stream_clean_dataset(input_file, chunksize=chunksize, fill_values=fill_values):
         cleaned_chunk.to_csv(
             output_file,
             index=False,
@@ -581,6 +615,7 @@ def stream_clean_to_csv(
 def load_and_clean_chunked(
     file: object,
     chunksize: Optional[int] = DEFAULT_CHUNKSIZE,
+    fill_values: Optional[Dict[str, object]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
     Load and clean a tabular dataset using iterative chunked processing.
@@ -595,7 +630,7 @@ def load_and_clean_chunked(
 
     if chunksize is not None and chunksize > 0:
         cleaned_chunks: List[pd.DataFrame] = []
-        for cleaned_chunk in stream_clean_dataset(file, chunksize=chunksize):
+        for cleaned_chunk in stream_clean_dataset(file, chunksize=chunksize, fill_values=fill_values):
             cleaned_chunks.append(cleaned_chunk)
 
         if not cleaned_chunks:
@@ -606,7 +641,7 @@ def load_and_clean_chunked(
         df = pd.read_csv(file)
         if df.empty:
             raise ValueError("The uploaded CSV file is empty.")
-        df = clean_chunk(df)
+        df = clean_chunk(df, fill_values=fill_values)
 
     if df.empty:
         raise ValueError("The uploaded CSV file is empty.")
@@ -627,10 +662,13 @@ def analyze_dataset(
     Supports customizable missing value imputation strategies via `strategy` (Law 2).
     Adheres strictly to Law 2 (cleaning integrity) and Law 3 (return contract).
 
-    Note on memory complexity:
-    In-memory DataFrame construction is performed in a single pass via pd.read_csv()
-    to eliminate the ≈ 2 × O(N) peak memory overhead from chunk list accumulation and pd.concat().
-    Chunked streaming is strictly reserved for stream_clean_to_csv() where chunks are flushed
+    Note on chunksize and memory complexity:
+    `chunksize` is accepted in the public API signature for backward compatibility.
+    However, in-memory DataFrame construction intentionally bypasses chunked accumulation
+    (pd.read_csv(..., chunksize=C) followed by pd.concat()) because chunk accumulation causes
+    an unnecessary ≈ 2 × O(N) peak memory spike during concatenation. Single-pass pd.read_csv()
+    builds the DataFrame in-place with lower peak memory and avoids chunk-local imputation drift.
+    Chunked iteration is strictly reserved for stream_clean_to_csv() where chunks are flushed
     directly to the output stream and freed in bounded O(C) memory.
     """
     try:
@@ -639,6 +677,9 @@ def analyze_dataset(
             actual_strategy: Union[str, Dict[str, str]] = "mean"
         else:
             actual_strategy = strategy
+
+        if chunksize is not None and chunksize <= 0:
+            raise ValueError(f"chunksize must be a positive integer, got {chunksize}.")
 
         if file is None:
             raise ValueError("Invalid file path or buffer object type: <class 'NoneType'>")
@@ -748,6 +789,11 @@ def evaluate_memory_footprint(
     Empirically evaluate and compare memory footprints and execution latency across chunk sizes.
     Demonstrates O(N) monolithic space complexity vs O(C) bounded chunked streaming cleaning.
     Utilizes Python standard library tracemalloc for deterministic heap tracking.
+
+    Workload Parity Note:
+    Both the monolithic baseline (O(N)) and chunked streaming loop (O(C)) execute identical
+    data cleaning and missing-value imputation workloads via clean_chunk(), ensuring a strict
+    apples-to-apples performance comparison.
     """
     if chunk_sizes is None:
         chunk_sizes = [500, 1000, 5000, 10000]
@@ -764,11 +810,7 @@ def evaluate_memory_footprint(
     t0 = time.perf_counter()
     bio_base = io.BytesIO(csv_bytes)
     df_base = pd.read_csv(bio_base)
-    for col in df_base.columns:
-        if pd.api.types.is_numeric_dtype(df_base[col]):
-            df_base[col] = df_base[col].fillna(0)
-        else:
-            df_base[col] = df_base[col].fillna("Unknown")
+    df_base = clean_chunk(df_base)
     t1 = time.perf_counter()
     _, peak_base_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
