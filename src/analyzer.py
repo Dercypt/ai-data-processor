@@ -297,6 +297,14 @@ def impute_missing_values(
 
     valid_strategies = {"mean", "median", "mode", "zero", "forward_fill", "random_draw", "drop"}
 
+    # Normalize infinite values prior to imputation
+    normalized_df = df.copy()
+    for col in normalized_df.columns:
+        if pd.api.types.is_numeric_dtype(normalized_df[col]):
+            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+        elif normalized_df[col].isin([np.inf, -np.inf]).any():
+            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+
     if isinstance(strategy, str):
         strat_lower = strategy.strip().lower().replace(" ", "_")
         if strat_lower not in valid_strategies:
@@ -305,7 +313,7 @@ def impute_missing_values(
                 f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'forward_fill', 'random_draw', 'drop'."
             )
 
-        result_df = df.copy()
+        result_df = normalized_df.copy()
         if strat_lower == "drop":
             result_df = result_df.dropna().reset_index(drop=True)
             if result_df.empty and not df.empty:
@@ -366,7 +374,7 @@ def impute_missing_values(
         return result_df
 
     elif isinstance(strategy, dict):
-        result_df = df.copy()
+        result_df = normalized_df.copy()
         normalized_strat: Dict[str, str] = {}
         for col_key, strat_val in strategy.items():
             if col_key not in result_df.columns:
@@ -535,6 +543,12 @@ def clean_chunk(
         return chunk.copy()
 
     cleaned = chunk.copy()
+    for col in cleaned.columns:
+        if pd.api.types.is_numeric_dtype(cleaned[col]):
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+        elif cleaned[col].isin([np.inf, -np.inf]).any():
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+
     if fill_values:
         applicable_fills = {k: v for k, v in fill_values.items() if k in cleaned.columns}
         if applicable_fills:

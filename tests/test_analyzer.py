@@ -482,6 +482,47 @@ class TestAnalyzer(unittest.TestCase):
         self.assertNotIn("dependency_graph", summary)
 
 
+    def test_impute_missing_values_normalizes_infinite_values(self):
+        """impute_missing_values must normalize +/-inf to NaN and impute them cleanly without RuntimeWarnings."""
+        df_inf = pd.DataFrame({
+            "val": [10.0, 20.0, np.inf, -np.inf, np.nan],
+        })
+
+        # 1. Global Mean: mean of [10.0, 20.0] is 15.0; infinite values become NaNs and filled with 15.0
+        imputed_mean = impute_missing_values(df_inf, strategy="mean")
+        self.assertFalse(np.isneginf(imputed_mean["val"]).any())
+        self.assertFalse(np.isposinf(imputed_mean["val"]).any())
+        self.assertEqual(int(imputed_mean["val"].isnull().sum()), 0)
+        self.assertEqual(list(imputed_mean["val"]), [10.0, 20.0, 15.0, 15.0, 15.0])
+
+        # 2. Global Drop: rows with inf, -inf, or nan must be dropped
+        imputed_drop = impute_missing_values(df_inf, strategy="drop")
+        self.assertEqual(len(imputed_drop), 2)
+        self.assertEqual(list(imputed_drop["val"]), [10.0, 20.0])
+
+        # 3. Dict Strategy
+        imputed_dict = impute_missing_values(df_inf, strategy={"val": "median"})
+        self.assertEqual(int(imputed_dict["val"].isnull().sum()), 0)
+        self.assertEqual(list(imputed_dict["val"]), [10.0, 20.0, 15.0, 15.0, 15.0])
+
+    def test_analyze_dataset_with_infinite_csv_values(self):
+        """analyze_dataset must parse CSVs with inf / -inf and produce finite summary statistics."""
+        csv_data = b"feature_a,feature_b\n10.0,1.0\n20.0,inf\n30.0,-inf\n40.0,4.0\n"
+        df, summary, err = analyze_dataset(csv_data)
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(summary)
+        # Verify no inf or nan values exist in the cleaned DataFrame
+        self.assertFalse(np.isinf(df.to_numpy(dtype=float)).any())
+        self.assertEqual(int(df.isnull().sum().sum()), 0)
+        # Verify outlier bounds are finite numbers and not NaN / inf
+        iqr_b = summary["outliers"]["iqr"]["feature_b"]
+        self.assertFalse(np.isnan(iqr_b["lower_bound"]))
+        self.assertFalse(np.isnan(iqr_b["upper_bound"]))
+        self.assertFalse(np.isinf(iqr_b["lower_bound"]))
+        self.assertFalse(np.isinf(iqr_b["upper_bound"]))
+
+
 if __name__ == "__main__":
     unittest.main()
 
