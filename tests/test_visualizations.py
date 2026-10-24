@@ -508,6 +508,47 @@ class TestVisualizations(unittest.TestCase):
         self.assertIn("generate_stream_cleaned_csv", main.__all__)
         self.assertTrue(callable(getattr(main, "generate_stream_cleaned_csv")))
 
+    def test_main_exports_clear_analysis_session_state(self):
+        """main module should export clear_analysis_session_state in __all__."""
+        import main
+        self.assertIn("clear_analysis_session_state", main.__all__)
+        self.assertTrue(callable(getattr(main, "clear_analysis_session_state")))
+
+    def test_clear_analysis_session_state_resets_artifacts_and_preserves_user(self):
+        """clear_analysis_session_state must reset insights, summaries, and benchmarks to None while preserving user."""
+        import streamlit as st
+        import main
+
+        st.session_state["current_user"] = {"id": 99, "username": "analyst_alpha"}
+        st.session_state["generated_insight"] = {"executive_summary": "Top secret financial insights"}
+        st.session_state["dataset_summary"] = {"columns": ["revenue", "profit"], "rows": 5000}
+        st.session_state["imputation_drift_results"] = {"optimal_strategy": "mean", "drift": 0.01}
+        st.session_state["benchmark_results"] = {"chunk_sizes": [100, 200], "peak_memory": [12.5, 8.2]}
+
+        main.clear_analysis_session_state()
+
+        self.assertIsNone(st.session_state["generated_insight"])
+        self.assertIsNone(st.session_state["dataset_summary"])
+        self.assertIsNone(st.session_state["imputation_drift_results"])
+        self.assertIsNone(st.session_state["benchmark_results"])
+        self.assertEqual(st.session_state["current_user"], {"id": 99, "username": "analyst_alpha"})
+
+    def test_clear_analysis_session_state_edge_cases(self):
+        """clear_analysis_session_state should gracefully handle missing keys or already None state."""
+        import streamlit as st
+        import main
+
+        for key in ["generated_insight", "dataset_summary", "imputation_drift_results", "benchmark_results"]:
+            if key in st.session_state:
+                del st.session_state[key]
+
+        main.clear_analysis_session_state()
+
+        self.assertIsNone(st.session_state["generated_insight"])
+        self.assertIsNone(st.session_state["dataset_summary"])
+        self.assertIsNone(st.session_state["imputation_drift_results"])
+        self.assertIsNone(st.session_state["benchmark_results"])
+
 
 if __name__ == "__main__":
     unittest.main()
