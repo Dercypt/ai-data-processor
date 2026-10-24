@@ -5,9 +5,11 @@ import pandas as pd
 from typing import Dict, Optional, Tuple
 
 from analyzer import (
+    DEFAULT_CHUNKSIZE,
     analyze_dataset,
     detect_column_types,
     load_dataset as analyzer_load_dataset,
+    stream_clean_to_csv,
 )
 from llm_service import get_ai_insights
 from database import (
@@ -36,6 +38,7 @@ from visualizations import (
 __all__ = [
     "get_current_user_id",
     "load_dataset",
+    "generate_stream_cleaned_csv",
     "render_sidebar_insights",
     "render_distribution_chart",
     "render_correlation_heatmap",
@@ -86,6 +89,20 @@ def load_dataset(
 ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, object]], Optional[str]]:
     """Ingest CSV tabular dataset and detect column types via analyzer with caching."""
     return analyzer_load_dataset(file_bytes)
+
+
+def generate_stream_cleaned_csv(
+    file_bytes: bytes,
+    chunksize: int = DEFAULT_CHUNKSIZE,
+    fill_values: Optional[Dict[str, object]] = None,
+) -> str:
+    """
+    Stream-clean a tabular dataset in bounded O(C) memory and return cleaned CSV string.
+    Delegates directly to stream_clean_to_csv to ensure memory-bounded execution.
+    """
+    out_buf = io.StringIO()
+    stream_clean_to_csv(io.BytesIO(file_bytes), out_buf, chunksize=chunksize, fill_values=fill_values)
+    return out_buf.getvalue()
 
 
 # --- SIDEBAR: AUTHENTICATION & WORKSPACE ---
@@ -280,6 +297,23 @@ if file:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to generate structured insights: {e}")
+
+            st.divider()
+            st.write("### 📥 Pipeline Export")
+            st.caption("Stream-clean and export dataset in bounded $O(C)$ memory:")
+            cleaned_csv_data: str = ""
+            if isinstance(file_bytes, bytes):
+                cleaned_csv_data = generate_stream_cleaned_csv(file_bytes)
+            orig_name = getattr(file, "name", "dataset.csv")
+            export_filename = f"stream_cleaned_{orig_name}" if not str(orig_name).startswith("stream_cleaned_") else str(orig_name)
+            st.download_button(
+                label="Download Stream-Cleaned CSV",
+                data=cleaned_csv_data,
+                file_name=export_filename,
+                mime="text/csv",
+                key="btn_download_stream_cleaned_csv",
+                use_container_width=True,
+            )
 
     # --- DISPLAY RESULTS (Outside the button) ---
     if st.session_state["generated_insight"]:
