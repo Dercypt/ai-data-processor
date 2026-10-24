@@ -185,7 +185,8 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
     - 'text': free-form high-cardinality unstructured strings
 
     Note: Object columns detected as 'continuous' maintain their original DataFrame dtype
-    unless explicitly coerced by the caller.
+    in raw data, but are automatically coerced to numeric via pd.to_numeric(..., errors="coerce")
+    during missing value imputation in impute_missing_values and clean_chunk.
     """
     column_types: Dict[str, str] = {}
     total_rows = len(df)
@@ -288,6 +289,15 @@ def impute_missing_values(
                   or a column-to-strategy mapping dictionary.
         default_unspecified: Optional fallback strategy for columns not present in the strategy dictionary.
         seed: Optional random state integer for reproducible sampling in random_draw strategy.
+
+    Value Normalization & Type Coercion:
+    - Infinite Values: Infinite values (np.inf, -np.inf) are normalized to np.nan prior to
+      imputation, preventing ±inf distortion in mean/median calculations and avoiding NaN bounds in
+      downstream outlier detectors (IQR and Z-score).
+    - Continuous Object Columns: Object columns detected as 'continuous' (>=90% numeric strings)
+      are coerced via pd.to_numeric(df[col], errors="coerce") prior to imputation. Any invalid
+      string tokens become NaNs and get imputed under the selected strategy, ensuring they are
+      retained in downstream numeric analyses, correlations, and distribution visualizations.
 
     Returns:
         pd.DataFrame with missing values imputed or dropped according to configuration.
