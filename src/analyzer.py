@@ -845,10 +845,13 @@ def evaluate_memory_footprint(
     Demonstrates O(N) monolithic space complexity vs O(C) bounded chunked streaming cleaning.
     Utilizes Python standard library tracemalloc for deterministic heap tracking.
 
-    Workload Parity Note:
+    Workload Parity & Heap Isolation Note:
     Both the monolithic baseline (O(N)) and chunked streaming loop (O(C)) execute identical
-    data cleaning and missing-value imputation workloads via clean_chunk(), ensuring a strict
-    apples-to-apples performance comparison.
+    data cleaning and missing-value imputation workloads via clean_chunk().
+    The streaming benchmark delegates directly to the production generator stream_clean_dataset().
+    Monolithic allocations (df_base, bio_base) are explicitly deleted prior to the streaming
+    evaluations to ensure heap isolation. Total row counts are derived directly from the parsed
+    baseline DataFrame (len(df_base)) to prevent miscounts on fields with embedded newlines.
     """
     if chunk_sizes is None:
         chunk_sizes = [500, 1000, 5000, 10000]
