@@ -39,6 +39,7 @@ __all__ = [
     "get_current_user_id",
     "load_dataset",
     "generate_stream_cleaned_csv",
+    "clear_analysis_session_state",
     "render_sidebar_insights",
     "render_distribution_chart",
     "render_correlation_heatmap",
@@ -70,6 +71,22 @@ if "dataset_summary" not in st.session_state:
     st.session_state["dataset_summary"] = None
 if "current_file_id" not in st.session_state:
     st.session_state["current_file_id"] = None
+if "imputation_drift_results" not in st.session_state:
+    st.session_state["imputation_drift_results"] = None
+if "benchmark_results" not in st.session_state:
+    st.session_state["benchmark_results"] = None
+
+
+def clear_analysis_session_state() -> None:
+    """Clear private analysis artifacts and benchmark results from session state.
+
+    Ensures that generated insights, dataset summaries, imputation drift,
+    and memory benchmarks do not leak across authentication boundaries.
+    """
+    st.session_state["generated_insight"] = None
+    st.session_state["dataset_summary"] = None
+    st.session_state["imputation_drift_results"] = None
+    st.session_state["benchmark_results"] = None
 
 
 def get_current_user_id() -> Optional[int]:
@@ -132,6 +149,7 @@ if st.session_state["current_user"] is None:
                 try:
                     user_record = authenticate_user(auth_username, auth_password)
                     st.session_state["current_user"] = user_record
+                    clear_analysis_session_state()
                     st.sidebar.success(f"Welcome back, {user_record['username']}!")
                     st.rerun()
                 except AuthenticationError:
@@ -143,6 +161,7 @@ else:
     st.sidebar.markdown(f"👤 Logged in as: **{current_username}**")
     if st.sidebar.button("Logout", key="btn_logout"):
         st.session_state["current_user"] = None
+        clear_analysis_session_state()
         st.rerun()
 
 st.sidebar.divider()
