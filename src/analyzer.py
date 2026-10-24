@@ -185,7 +185,8 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
     - 'text': free-form high-cardinality unstructured strings
 
     Note: Object columns detected as 'continuous' maintain their original DataFrame dtype
-    unless explicitly coerced by the caller.
+    in raw data, but are automatically coerced to numeric via pd.to_numeric(..., errors="coerce")
+    during missing value imputation in impute_missing_values and clean_chunk.
     """
     column_types: Dict[str, str] = {}
     total_rows = len(df)
@@ -289,6 +290,15 @@ def impute_missing_values(
         default_unspecified: Optional fallback strategy for columns not present in the strategy dictionary.
         seed: Optional random state integer for reproducible sampling in random_draw strategy.
 
+    Value Normalization & Type Coercion:
+    - Infinite Values: Infinite values (np.inf, -np.inf) are normalized to np.nan prior to
+      imputation, preventing ±inf distortion in mean/median calculations and avoiding NaN bounds in
+      downstream outlier detectors (IQR and Z-score).
+    - Continuous Object Columns: Object columns detected as 'continuous' (>=90% numeric strings)
+      are coerced via pd.to_numeric(df[col], errors="coerce") prior to imputation. Any invalid
+      string tokens become NaNs and get imputed under the selected strategy, ensuring they are
+      retained in downstream numeric analyses, correlations, and distribution visualizations.
+
     Returns:
         pd.DataFrame with missing values imputed or dropped according to configuration.
     """
@@ -296,6 +306,21 @@ def impute_missing_values(
         return df.copy()
 
     valid_strategies = {"mean", "median", "mode", "zero", "forward_fill", "random_draw", "drop"}
+
+    # Normalize infinite values prior to imputation
+    normalized_df = df.copy()
+    for col in normalized_df.columns:
+        if pd.api.types.is_numeric_dtype(normalized_df[col]):
+            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+        elif normalized_df[col].isin([np.inf, -np.inf]).any():
+            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+
+    # Coerce object columns detected as "continuous" so invalid string tokens become NaNs
+    col_types = detect_column_types(normalized_df)
+    for col in normalized_df.columns:
+        if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(normalized_df[col]):
+            normalized_df[col] = pd.to_numeric(normalized_df[col], errors="coerce")
+            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
 
     if isinstance(strategy, str):
         strat_lower = strategy.strip().lower().replace(" ", "_")
@@ -305,7 +330,7 @@ def impute_missing_values(
                 f"Supported strategies: 'mean', 'median', 'mode', 'zero', 'forward_fill', 'random_draw', 'drop'."
             )
 
-        result_df = df.copy()
+        result_df = normalized_df.copy()
         if strat_lower == "drop":
             result_df = result_df.dropna().reset_index(drop=True)
             if result_df.empty and not df.empty:
@@ -366,7 +391,7 @@ def impute_missing_values(
         return result_df
 
     elif isinstance(strategy, dict):
-        result_df = df.copy()
+        result_df = normalized_df.copy()
         normalized_strat: Dict[str, str] = {}
         for col_key, strat_val in strategy.items():
             if col_key not in result_df.columns:
@@ -535,6 +560,18 @@ def clean_chunk(
         return chunk.copy()
 
     cleaned = chunk.copy()
+    for col in cleaned.columns:
+        if pd.api.types.is_numeric_dtype(cleaned[col]):
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+        elif cleaned[col].isin([np.inf, -np.inf]).any():
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+
+    chunk_types = detect_column_types(cleaned)
+    for col in cleaned.columns:
+        if chunk_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(cleaned[col]):
+            cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce")
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+
     if fill_values:
         applicable_fills = {k: v for k, v in fill_values.items() if k in cleaned.columns}
         if applicable_fills:

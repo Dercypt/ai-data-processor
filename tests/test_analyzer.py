@@ -482,6 +482,140 @@ class TestAnalyzer(unittest.TestCase):
         self.assertNotIn("dependency_graph", summary)
 
 
+    def test_impute_missing_values_normalizes_infinite_values(self):
+        """impute_missing_values must normalize +/-inf to NaN and impute them cleanly without RuntimeWarnings."""
+        df_inf = pd.DataFrame({
+            "val": [10.0, 20.0, np.inf, -np.inf, np.nan],
+        })
+
+        # 1. Global Mean: mean of [10.0, 20.0] is 15.0; infinite values become NaNs and filled with 15.0
+        imputed_mean = impute_missing_values(df_inf, strategy="mean")
+        self.assertFalse(np.isneginf(imputed_mean["val"]).any())
+        self.assertFalse(np.isposinf(imputed_mean["val"]).any())
+        self.assertEqual(int(imputed_mean["val"].isnull().sum()), 0)
+        self.assertEqual(list(imputed_mean["val"]), [10.0, 20.0, 15.0, 15.0, 15.0])
+
+        # 2. Global Drop: rows with inf, -inf, or nan must be dropped
+        imputed_drop = impute_missing_values(df_inf, strategy="drop")
+        self.assertEqual(len(imputed_drop), 2)
+        self.assertEqual(list(imputed_drop["val"]), [10.0, 20.0])
+
+        # 3. Dict Strategy
+        imputed_dict = impute_missing_values(df_inf, strategy={"val": "median"})
+        self.assertEqual(int(imputed_dict["val"].isnull().sum()), 0)
+        self.assertEqual(list(imputed_dict["val"]), [10.0, 20.0, 15.0, 15.0, 15.0])
+
+    def test_analyze_dataset_with_infinite_csv_values(self):
+        """analyze_dataset must parse CSVs with inf / -inf and produce finite summary statistics."""
+        csv_data = b"feature_a,feature_b\n10.0,1.0\n20.0,inf\n30.0,-inf\n40.0,4.0\n"
+        df, summary, err = analyze_dataset(csv_data)
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(summary)
+        # Verify no inf or nan values exist in the cleaned DataFrame
+        self.assertFalse(np.isinf(df.to_numpy(dtype=float)).any())
+        self.assertEqual(int(df.isnull().sum().sum()), 0)
+        # Verify outlier bounds are finite numbers and not NaN / inf
+        iqr_b = summary["outliers"]["iqr"]["feature_b"]
+        self.assertFalse(np.isnan(iqr_b["lower_bound"]))
+        self.assertFalse(np.isnan(iqr_b["upper_bound"]))
+        self.assertFalse(np.isinf(iqr_b["lower_bound"]))
+        self.assertFalse(np.isinf(iqr_b["upper_bound"]))
+
+
+    def test_impute_missing_values_coerces_continuous_object_columns(self):
+        """impute_missing_values must coerce detected continuous object columns so invalid tokens become NaNs and get imputed."""
+        df_mixed = pd.DataFrame({
+            "continuous_str": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "corrupted_val"],
+            "categorical_str": ["cat", "dog", "bird", "fish", "dog", "cat", "bird", "cat", "dog", None],
+        })
+
+        # Global mean: continuous_str coerced to float64, 'corrupted_val' coerced to NaN and filled with 50.0
+        imputed_mean = impute_missing_values(df_mixed, strategy="mean")
+        self.assertTrue(pd.api.types.is_numeric_dtype(imputed_mean["continuous_str"]))
+        self.assertEqual(int(imputed_mean["continuous_str"].isnull().sum()), 0)
+        self.assertEqual(imputed_mean["continuous_str"].iloc[-1], 50.0)
+        # categorical_str remains object
+        self.assertFalse(pd.api.types.is_numeric_dtype(imputed_mean["categorical_str"]))
+
+        # Per-column strategy: continuous_str accepts numeric strategies like 'median'
+        imputed_median = impute_missing_values(df_mixed, strategy={"continuous_str": "median", "categorical_str": "mode"})
+        self.assertTrue(pd.api.types.is_numeric_dtype(imputed_median["continuous_str"]))
+        self.assertEqual(imputed_median["continuous_str"].iloc[-1], 50.0)
+
+        # Categorical column still rejects numeric strategies with ValueError
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_mixed, strategy={"categorical_str": "mean"})
+
+    def test_analyze_dataset_coerces_continuous_and_includes_in_downstream_metrics(self):
+        """analyze_dataset must coerce continuous object columns and retain them across correlation and outlier analyses."""
+        csv_rows = [
+            "num_str,pure_num\n",
+            "10.0,1\n",
+            "20.0,2\n",
+            "30.0,3\n",
+            "40.0,4\n",
+            "50.0,5\n",
+            "60.0,6\n",
+            "70.0,7\n",
+            "80.0,8\n",
+            "90.0,9\n",
+            "corrupted_token,10\n",
+        ]
+        csv_bytes = "".join(csv_rows).encode("utf-8")
+        df, summary, err = analyze_dataset(csv_bytes)
+
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(summary)
+
+        # Verify df column dtype is numeric and clean
+        self.assertTrue(pd.api.types.is_numeric_dtype(df["num_str"]))
+        self.assertEqual(int(df["num_str"].isnull().sum()), 0)
+
+        # Verify summary stats include numeric stats (mean, std) for num_str
+        self.assertIn("num_str", summary["stats"])
+        self.assertIn("mean", summary["stats"]["num_str"])
+
+        # Verify correlation includes num_str
+        self.assertIn("num_str", summary["correlation"])
+        self.assertIn("pure_num", summary["correlation"]["num_str"])
+
+        # Verify outlier detection includes num_str
+        self.assertIn("num_str", summary["outliers"]["iqr"])
+        self.assertIn("num_str", summary["outliers"]["zscore"])
+
+    def test_inf_and_continuous_coercion_edge_cases(self):
+        """Edge cases: string 'inf'/'-inf' tokens in continuous columns, all-inf columns, and non-standard indices."""
+        # 1. Object column with numeric strings and literal 'inf'/' -inf' tokens
+        df_str_inf = pd.DataFrame({
+            "col": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "inf", "-inf"]
+        })
+        res1 = impute_missing_values(df_str_inf, strategy="mean")
+        self.assertTrue(pd.api.types.is_numeric_dtype(res1["col"]))
+        self.assertEqual(res1["col"].tolist(), [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 50.0, 50.0])
+        self.assertFalse(np.isinf(res1["col"]).any())
+
+        # 2. All-inf column with mean strategy fills with fallback 0.0
+        df_all_inf = pd.DataFrame({"a": [np.inf, -np.inf, np.inf]})
+        res2 = impute_missing_values(df_all_inf, strategy="mean")
+        self.assertEqual(res2["a"].tolist(), [0.0, 0.0, 0.0])
+
+        # 3. All-inf column with drop strategy raises domain ValueError (Law 2 / Principle 1)
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_all_inf, strategy="drop")
+
+        # 4. Non-standard DataFrame index is preserved after coercion and imputation
+        df_custom_idx = pd.DataFrame(
+            {"feat": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "err"]},
+            index=[100 + i for i in range(10)],
+        )
+        res4 = impute_missing_values(df_custom_idx, strategy="median")
+        self.assertEqual(res4.index.tolist(), [100 + i for i in range(10)])
+        self.assertTrue(pd.api.types.is_numeric_dtype(res4["feat"]))
+        self.assertEqual(int(res4["feat"].isnull().sum()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
 
