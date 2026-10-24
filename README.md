@@ -13,7 +13,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 * **Statistical Analysis:** Generates descriptive statistics (mean, median, std dev) automatically.
 * **AI Analyst Agent:** Uses the **Gemini Flash** model to interpret data trends and provide 3 key business insights.
 * **Database Persistence:** Automatically saves analysis results to a local SQLite database for persistent storage across sessions.
-* **Privacy Focused:** Your data is processed locally; only the statistical summary is sent to the LLM.
+* **Privacy Focused:** Your data is processed locally; only the statistical summary is sent to the LLM. Private session isolation guarantees generated insights, summaries, and benchmark results are purged on login, logout, and account transitions.
 
 ## Tech Stack
 
