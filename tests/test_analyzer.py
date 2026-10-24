@@ -585,6 +585,36 @@ class TestAnalyzer(unittest.TestCase):
         self.assertIn("num_str", summary["outliers"]["iqr"])
         self.assertIn("num_str", summary["outliers"]["zscore"])
 
+    def test_inf_and_continuous_coercion_edge_cases(self):
+        """Edge cases: string 'inf'/'-inf' tokens in continuous columns, all-inf columns, and non-standard indices."""
+        # 1. Object column with numeric strings and literal 'inf'/' -inf' tokens
+        df_str_inf = pd.DataFrame({
+            "col": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "inf", "-inf"]
+        })
+        res1 = impute_missing_values(df_str_inf, strategy="mean")
+        self.assertTrue(pd.api.types.is_numeric_dtype(res1["col"]))
+        self.assertEqual(res1["col"].tolist(), [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 50.0, 50.0])
+        self.assertFalse(np.isinf(res1["col"]).any())
+
+        # 2. All-inf column with mean strategy fills with fallback 0.0
+        df_all_inf = pd.DataFrame({"a": [np.inf, -np.inf, np.inf]})
+        res2 = impute_missing_values(df_all_inf, strategy="mean")
+        self.assertEqual(res2["a"].tolist(), [0.0, 0.0, 0.0])
+
+        # 3. All-inf column with drop strategy raises domain ValueError (Law 2 / Principle 1)
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_all_inf, strategy="drop")
+
+        # 4. Non-standard DataFrame index is preserved after coercion and imputation
+        df_custom_idx = pd.DataFrame(
+            {"feat": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "err"]},
+            index=[100 + i for i in range(10)],
+        )
+        res4 = impute_missing_values(df_custom_idx, strategy="median")
+        self.assertEqual(res4.index.tolist(), [100 + i for i in range(10)])
+        self.assertTrue(pd.api.types.is_numeric_dtype(res4["feat"]))
+        self.assertEqual(int(res4["feat"].isnull().sum()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
