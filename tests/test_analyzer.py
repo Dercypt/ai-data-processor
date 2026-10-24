@@ -523,6 +523,69 @@ class TestAnalyzer(unittest.TestCase):
         self.assertFalse(np.isinf(iqr_b["upper_bound"]))
 
 
+    def test_impute_missing_values_coerces_continuous_object_columns(self):
+        """impute_missing_values must coerce detected continuous object columns so invalid tokens become NaNs and get imputed."""
+        df_mixed = pd.DataFrame({
+            "continuous_str": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "corrupted_val"],
+            "categorical_str": ["cat", "dog", "bird", "fish", "dog", "cat", "bird", "cat", "dog", None],
+        })
+
+        # Global mean: continuous_str coerced to float64, 'corrupted_val' coerced to NaN and filled with 50.0
+        imputed_mean = impute_missing_values(df_mixed, strategy="mean")
+        self.assertTrue(pd.api.types.is_numeric_dtype(imputed_mean["continuous_str"]))
+        self.assertEqual(int(imputed_mean["continuous_str"].isnull().sum()), 0)
+        self.assertEqual(imputed_mean["continuous_str"].iloc[-1], 50.0)
+        # categorical_str remains object
+        self.assertFalse(pd.api.types.is_numeric_dtype(imputed_mean["categorical_str"]))
+
+        # Per-column strategy: continuous_str accepts numeric strategies like 'median'
+        imputed_median = impute_missing_values(df_mixed, strategy={"continuous_str": "median", "categorical_str": "mode"})
+        self.assertTrue(pd.api.types.is_numeric_dtype(imputed_median["continuous_str"]))
+        self.assertEqual(imputed_median["continuous_str"].iloc[-1], 50.0)
+
+        # Categorical column still rejects numeric strategies with ValueError
+        with self.assertRaises(ValueError):
+            impute_missing_values(df_mixed, strategy={"categorical_str": "mean"})
+
+    def test_analyze_dataset_coerces_continuous_and_includes_in_downstream_metrics(self):
+        """analyze_dataset must coerce continuous object columns and retain them across correlation and outlier analyses."""
+        csv_rows = [
+            "num_str,pure_num\n",
+            "10.0,1\n",
+            "20.0,2\n",
+            "30.0,3\n",
+            "40.0,4\n",
+            "50.0,5\n",
+            "60.0,6\n",
+            "70.0,7\n",
+            "80.0,8\n",
+            "90.0,9\n",
+            "corrupted_token,10\n",
+        ]
+        csv_bytes = "".join(csv_rows).encode("utf-8")
+        df, summary, err = analyze_dataset(csv_bytes)
+
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(summary)
+
+        # Verify df column dtype is numeric and clean
+        self.assertTrue(pd.api.types.is_numeric_dtype(df["num_str"]))
+        self.assertEqual(int(df["num_str"].isnull().sum()), 0)
+
+        # Verify summary stats include numeric stats (mean, std) for num_str
+        self.assertIn("num_str", summary["stats"])
+        self.assertIn("mean", summary["stats"]["num_str"])
+
+        # Verify correlation includes num_str
+        self.assertIn("num_str", summary["correlation"])
+        self.assertIn("pure_num", summary["correlation"]["num_str"])
+
+        # Verify outlier detection includes num_str
+        self.assertIn("num_str", summary["outliers"]["iqr"])
+        self.assertIn("num_str", summary["outliers"]["zscore"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

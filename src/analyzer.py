@@ -305,6 +305,13 @@ def impute_missing_values(
         elif normalized_df[col].isin([np.inf, -np.inf]).any():
             normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
 
+    # Coerce object columns detected as "continuous" so invalid string tokens become NaNs
+    col_types = detect_column_types(normalized_df)
+    for col in normalized_df.columns:
+        if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(normalized_df[col]):
+            normalized_df[col] = pd.to_numeric(normalized_df[col], errors="coerce")
+            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+
     if isinstance(strategy, str):
         strat_lower = strategy.strip().lower().replace(" ", "_")
         if strat_lower not in valid_strategies:
@@ -547,6 +554,12 @@ def clean_chunk(
         if pd.api.types.is_numeric_dtype(cleaned[col]):
             cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
         elif cleaned[col].isin([np.inf, -np.inf]).any():
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+
+    chunk_types = detect_column_types(cleaned)
+    for col in cleaned.columns:
+        if chunk_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(cleaned[col]):
+            cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce")
             cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
 
     if fill_values:
