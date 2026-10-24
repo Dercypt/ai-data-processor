@@ -222,6 +222,34 @@ class TestChunkedProcessing(unittest.TestCase):
         self.assertGreater(bench["baseline_peak_kb"], 0)
         self.assertEqual(len(bench["evaluations"]), 3)
 
+    def test_evaluate_memory_footprint_embedded_newlines_row_count(self) -> None:
+        """evaluate_memory_footprint must accurately count rows even with embedded newlines."""
+        multiline_df = pd.DataFrame({
+            "id": [1, 2, 3, 4, 5],
+            "text": [
+                "normal text",
+                "text with\nembedded\nnewlines",
+                "another\nmultiline entry",
+                "clean record",
+                "final\nmulti\nline\nrow",
+            ],
+            "value": [10.5, 20.0, 31.2, 45.1, 55.0],
+        })
+        csv_bytes = multiline_df.to_csv(index=False).encode("utf-8")
+        bench = evaluate_memory_footprint(csv_bytes, chunk_sizes=[2])
+
+        self.assertEqual(bench["dataset_info"]["total_rows"], 5)
+        self.assertEqual(bench["dataset_info"]["total_columns"], 3)
+
+    def test_evaluate_memory_footprint_delegates_to_stream_clean_dataset(self) -> None:
+        """evaluate_memory_footprint must delegate streaming loop to stream_clean_dataset."""
+        from unittest.mock import patch
+        stream = self._get_stream()
+        with patch("analyzer.stream_clean_dataset", wraps=stream_clean_dataset) as mock_stream_clean:
+            bench = evaluate_memory_footprint(stream, chunk_sizes=[20, 50])
+            self.assertEqual(mock_stream_clean.call_count, 2)
+        self.assertEqual(len(bench["evaluations"]), 3)
+
 
 if __name__ == "__main__":
     unittest.main()
