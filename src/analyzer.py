@@ -845,19 +845,18 @@ def evaluate_memory_footprint(
     Demonstrates O(N) monolithic space complexity vs O(C) bounded chunked streaming cleaning.
     Utilizes Python standard library tracemalloc for deterministic heap tracking.
 
-    Workload Parity Note:
+    Workload Parity & Heap Isolation Note:
     Both the monolithic baseline (O(N)) and chunked streaming loop (O(C)) execute identical
-    data cleaning and missing-value imputation workloads via clean_chunk(), ensuring a strict
-    apples-to-apples performance comparison.
+    data cleaning and missing-value imputation workloads via clean_chunk().
+    The streaming benchmark delegates directly to the production generator stream_clean_dataset().
+    Monolithic allocations (df_base, bio_base) are explicitly deleted prior to the streaming
+    evaluations to ensure heap isolation. Total row counts are derived directly from the parsed
+    baseline DataFrame (len(df_base)) to prevent miscounts on fields with embedded newlines.
     """
     if chunk_sizes is None:
         chunk_sizes = [500, 1000, 5000, 10000]
 
     csv_bytes = _extract_csv_bytes(file_or_data, sample_rows_if_synthetic)
-    inspect_df = pd.read_csv(io.BytesIO(csv_bytes), nrows=5)
-    total_rows = sum(1 for _ in io.BytesIO(csv_bytes)) - 1
-    total_cols = len(inspect_df.columns)
-
     results: List[Dict[str, Union[str, int, float, None]]] = []
 
     # 1. Baseline: Monolithic Unchunked O(N) Ingestion
@@ -869,6 +868,10 @@ def evaluate_memory_footprint(
     t1 = time.perf_counter()
     _, peak_base_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
+
+    total_rows = len(df_base)
+    total_cols = len(df_base.columns)
+    del df_base, bio_base
 
     baseline_kb = round(peak_base_bytes / 1024.0, 2)
     baseline_mb = round(peak_base_bytes / (1024.0 * 1024.0), 3)
@@ -891,22 +894,22 @@ def evaluate_memory_footprint(
     best_streaming_chunk_size = chunk_sizes[0]
     max_memory_reduction_pct = 0.0
 
-    # 2. Evaluate Pure Stream Cleaning O(C) across chunk sizes
+    # 2. Evaluate Pure Stream Cleaning O(C) across chunk sizes via stream_clean_dataset
     for cs in chunk_sizes:
         if cs <= 0:
             continue
         tracemalloc.start()
         t0_stream = time.perf_counter()
         bio_stream = io.BytesIO(csv_bytes)
-        stream_reader = pd.read_csv(bio_stream, chunksize=cs)
         chunk_count = 0
         cleaned_row_count = 0
-        for chunk in stream_reader:
+        for cleaned_chunk in stream_clean_dataset(bio_stream, chunksize=cs):
             chunk_count += 1
-            cleaned_row_count += len(clean_chunk(chunk))
+            cleaned_row_count += len(cleaned_chunk)
         t1_stream = time.perf_counter()
         _, peak_stream_bytes = tracemalloc.get_traced_memory()
         tracemalloc.stop()
+        del bio_stream
 
         stream_kb = round(peak_stream_bytes / 1024.0, 2)
         stream_mb = round(peak_stream_bytes / (1024.0 * 1024.0), 3)

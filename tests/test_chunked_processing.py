@@ -222,6 +222,62 @@ class TestChunkedProcessing(unittest.TestCase):
         self.assertGreater(bench["baseline_peak_kb"], 0)
         self.assertEqual(len(bench["evaluations"]), 3)
 
+    def test_evaluate_memory_footprint_embedded_newlines_row_count(self) -> None:
+        """evaluate_memory_footprint must accurately count rows even with embedded newlines."""
+        multiline_df = pd.DataFrame({
+            "id": [1, 2, 3, 4, 5],
+            "text": [
+                "normal text",
+                "text with\nembedded\nnewlines",
+                "another\nmultiline entry",
+                "clean record",
+                "final\nmulti\nline\nrow",
+            ],
+            "value": [10.5, 20.0, 31.2, 45.1, 55.0],
+        })
+        csv_bytes = multiline_df.to_csv(index=False).encode("utf-8")
+        bench = evaluate_memory_footprint(csv_bytes, chunk_sizes=[2])
+
+        self.assertEqual(bench["dataset_info"]["total_rows"], 5)
+        self.assertEqual(bench["dataset_info"]["total_columns"], 3)
+
+    def test_evaluate_memory_footprint_delegates_to_stream_clean_dataset(self) -> None:
+        """evaluate_memory_footprint must delegate streaming loop to stream_clean_dataset."""
+        from unittest.mock import patch
+        stream = self._get_stream()
+        with patch("analyzer.stream_clean_dataset", wraps=stream_clean_dataset) as mock_stream_clean:
+            bench = evaluate_memory_footprint(stream, chunk_sizes=[20, 50])
+            self.assertEqual(mock_stream_clean.call_count, 2)
+        self.assertEqual(len(bench["evaluations"]), 3)
+
+    def test_evaluate_memory_footprint_chunk_size_larger_than_dataset(self) -> None:
+        """evaluate_memory_footprint handles chunk size exceeding total row count gracefully."""
+        stream = self._get_stream()
+        bench = evaluate_memory_footprint(stream, chunk_sizes=[500])
+        self.assertEqual(bench["dataset_info"]["total_rows"], self.num_rows)
+        streaming_eval = bench["evaluations"][1]
+        self.assertEqual(streaming_eval["num_chunks"], 1)
+
+    def test_stream_clean_to_csv_with_embedded_newlines(self) -> None:
+        """stream_clean_to_csv preserves records containing embedded newlines and eliminates nulls."""
+        multiline_df = pd.DataFrame({
+            "id": [1, 2, 3],
+            "description": ["item 1", "item 2\nwith\nmultiline", np.nan],
+            "value": [10.0, np.nan, 30.0],
+        })
+        in_buf = io.StringIO()
+        multiline_df.to_csv(in_buf, index=False)
+        in_buf.seek(0)
+        out_buf = io.StringIO()
+
+        total_rows = stream_clean_to_csv(in_buf, out_buf, chunksize=2)
+        self.assertEqual(total_rows, 3)
+
+        out_buf.seek(0)
+        cleaned_reloaded = pd.read_csv(out_buf)
+        self.assertEqual(len(cleaned_reloaded), 3)
+        self.assertEqual(cleaned_reloaded.isnull().sum().sum(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

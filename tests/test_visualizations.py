@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sys
@@ -485,6 +486,27 @@ class TestVisualizations(unittest.TestCase):
             }
             visualizations.render_imputation_drift_benchmark(raw_df, {})
             mock_bench.assert_called_once_with(raw_df)
+
+    def test_main_generate_stream_cleaned_csv_delegates_to_stream_clean_to_csv(self):
+        """main.generate_stream_cleaned_csv delegates to stream_clean_to_csv and produces clean CSV."""
+        from unittest.mock import patch
+        import main
+
+        csv_bytes = b"feature1,feature2\n1.0,10\n,20\n3.0,\n"
+        with patch("main.stream_clean_to_csv", wraps=main.stream_clean_to_csv) as mock_stream_clean:
+            cleaned_str = main.generate_stream_cleaned_csv(csv_bytes, chunksize=2)
+            mock_stream_clean.assert_called_once()
+
+        self.assertIsInstance(cleaned_str, str)
+        reloaded = pd.read_csv(io.StringIO(cleaned_str))
+        self.assertEqual(len(reloaded), 3)
+        self.assertEqual(reloaded.isnull().sum().sum(), 0)
+
+    def test_main_exports_generate_stream_cleaned_csv(self):
+        """main module should export generate_stream_cleaned_csv in __all__."""
+        import main
+        self.assertIn("generate_stream_cleaned_csv", main.__all__)
+        self.assertTrue(callable(getattr(main, "generate_stream_cleaned_csv")))
 
 
 if __name__ == "__main__":
