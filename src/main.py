@@ -149,6 +149,7 @@ if st.session_state["current_user"] is None:
                 try:
                     user_record = authenticate_user(auth_username, auth_password)
                     st.session_state["current_user"] = user_record
+                    clear_analysis_session_state()
                     st.sidebar.success(f"Welcome back, {user_record['username']}!")
                     st.rerun()
                 except AuthenticationError:
@@ -160,6 +161,7 @@ else:
     st.sidebar.markdown(f"👤 Logged in as: **{current_username}**")
     if st.sidebar.button("Logout", key="btn_logout"):
         st.session_state["current_user"] = None
+        clear_analysis_session_state()
         st.rerun()
 
 st.sidebar.divider()
