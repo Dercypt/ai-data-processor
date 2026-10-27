@@ -387,6 +387,24 @@ class TestImputationDriftBenchmark(unittest.TestCase):
         self.assertEqual(prod_imputed.loc[1, "val"], 40.0)
         self.assertEqual(prod_imputed.loc[2, "val"], 40.0)
 
+    def test_compute_wasserstein_1d_edge_cases(self) -> None:
+        """compute_wasserstein_1d handles unequal lengths, single elements, and NaN filtering."""
+        # Single element arrays
+        u_single = np.array([5.0])
+        v_single = np.array([12.0])
+        self.assertEqual(compute_wasserstein_1d(u_single, v_single), 7.0)
+
+        # Unequal lengths fallback to quantile grid
+        u_short = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        v_long = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+        w_unequal = compute_wasserstein_1d(u_short, v_long)
+        self.assertGreater(w_unequal, 0.0)
+
+        # NaN filtering with equal effective lengths
+        u_nans = np.array([1.0, np.nan, 2.0, 3.0, np.nan])
+        v_nans = np.array([np.nan, 1.0, 2.0, np.nan, 3.0])
+        self.assertEqual(compute_wasserstein_1d(u_nans, v_nans), 0.0)
+
 
 class TestSummaryIntegration(unittest.TestCase):
     def test_generate_summary_contains_cs_engines(self) -> None:
