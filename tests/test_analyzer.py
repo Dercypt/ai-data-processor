@@ -720,6 +720,30 @@ class TestAnalyzer(unittest.TestCase):
             self.assertIn("col_types", called_kwargs)
             self.assertIsNotNone(called_kwargs["col_types"])
 
+    def test_normalize_and_coerce_edge_cases(self):
+        """_normalize_and_coerce handles empty DataFrames, all-inf columns, and non-numeric columns cleanly."""
+        # 1. Empty DataFrame
+        empty_df = pd.DataFrame()
+        cleaned_empty, types_empty = _normalize_and_coerce(empty_df)
+        self.assertTrue(cleaned_empty.empty)
+        self.assertEqual(types_empty, {})
+
+        # 2. All-inf column
+        all_inf_df = pd.DataFrame({"inf_col": [np.inf, -np.inf, np.inf]})
+        cleaned_inf, types_inf = _normalize_and_coerce(all_inf_df)
+        self.assertTrue(cleaned_inf["inf_col"].isnull().all())
+        self.assertEqual(types_inf["inf_col"], "continuous")
+
+        # 3. Pure categorical and text columns without any numeric/continuous columns
+        text_df = pd.DataFrame({
+            "cat": ["low", "medium", "high"],
+            "free_text": ["quick brown fox jumps", "over the lazy dog in garden", "machine learning test suite run"],
+        })
+        cleaned_text, types_text = _normalize_and_coerce(text_df)
+        self.assertEqual(types_text["cat"], "categorical")
+        self.assertEqual(types_text["free_text"], "text")
+        self.assertEqual(len(cleaned_text), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

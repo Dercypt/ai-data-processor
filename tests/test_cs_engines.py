@@ -167,6 +167,18 @@ class TestHeuristicRuleEngine(unittest.TestCase):
         self.assertGreater(len(lin_coupling), 0)
         self.assertIn(f"r={pearson_val:.2f}", lin_coupling[0].description)
 
+    def test_synthesize_heuristic_rules_constant_and_insufficient_features(self) -> None:
+        """synthesize_heuristic_rules handles constant features and single-feature DataFrames without error."""
+        # Single feature DataFrame
+        single_df = pd.DataFrame({"feat_1": [1.0, 2.0, 3.0, 4.0, 5.0]})
+        rules_single = synthesize_heuristic_rules(single_df)
+        self.assertEqual(len([r for r in rules_single if r.rule_type == "cross_feature_coupling"]), 0)
+
+        # Constant features (zero variance)
+        constant_df = pd.DataFrame({"const_a": [5.0] * 50, "const_b": [10.0] * 50})
+        rules_const = synthesize_heuristic_rules(constant_df)
+        self.assertEqual(len([r for r in rules_const if r.rule_type == "cross_feature_coupling"]), 0)
+
     def test_evaluate_heuristic_rules_and_attribution(self) -> None:
         result = evaluate_heuristic_rules(self.df)
         self.assertGreater(result["total_anomalies"], 0)
