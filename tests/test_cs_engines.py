@@ -314,6 +314,22 @@ class TestImputationDriftBenchmark(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_wasserstein_1d(np.array([]), self.u)
 
+    def test_compute_wasserstein_1d_tail_sensitivity(self) -> None:
+        """Wasserstein 1D must capture extreme tail perturbations without truncating <1% or >99% tails."""
+        arr1 = np.zeros(100, dtype=float)
+        arr2 = np.zeros(100, dtype=float)
+        # Tail outlier at the 100th percentile (index 99)
+        arr2[-1] = 100.0
+        # Under exact 1D W1, mean absolute difference is 100.0 / 100 = 1.0
+        w_tail = compute_wasserstein_1d(arr1, arr2)
+        self.assertEqual(w_tail, 1.0)
+
+        # Tail outlier at the 0th percentile (index 0)
+        arr3 = np.zeros(100, dtype=float)
+        arr3[0] = -50.0
+        w_tail_bottom = compute_wasserstein_1d(arr1, arr3)
+        self.assertEqual(w_tail_bottom, 0.5)
+
     def test_compute_ks_statistic_1d(self) -> None:
         ks_ident = compute_ks_statistic_1d(self.u, self.u)
         self.assertAlmostEqual(ks_ident, 0.0, places=2)
