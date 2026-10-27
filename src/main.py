@@ -1,3 +1,12 @@
+"""AI Data Processor - Streamlit Application Entry Point.
+
+This module provides the interactive web interface for the AI Data Processor application.
+Functions and resources are structured to prevent import-time side effects:
+- Database schema initialization is managed via `initialize_database()` cached once per server process using `@st.cache_resource`.
+- UI rendering and reactive script logic are encapsulated inside `main()`, guarded by `if __name__ == '__main__': main()`.
+- Tabular ingestion, streaming cleaning, and pipeline exports are cached via `@st.cache_data`.
+"""
+
 import io
 import os
 import streamlit as st
