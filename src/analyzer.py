@@ -270,7 +270,7 @@ def impute_missing_values(
     df: pd.DataFrame,
     strategy: Union[str, Dict[str, str]] = "mean",
     default_unspecified: Optional[str] = None,
-    seed: Optional[int] = None,
+    seed: Optional[int] = 42,
 ) -> pd.DataFrame:
     """
     Impute or clean missing values according to user-configurable strategies.
@@ -288,7 +288,7 @@ def impute_missing_values(
         strategy: Either a global strategy string ('mean', 'median', 'mode', 'zero', 'forward_fill', 'random_draw', 'drop')
                   or a column-to-strategy mapping dictionary.
         default_unspecified: Optional fallback strategy for columns not present in the strategy dictionary.
-        seed: Optional random state integer for reproducible sampling in random_draw strategy.
+        seed: Optional random state integer for reproducible sampling in random_draw strategy (defaults to 42).
 
     Value Normalization & Type Coercion:
     - Infinite Values: Infinite values (np.inf, -np.inf) are normalized to np.nan prior to
