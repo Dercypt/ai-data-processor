@@ -335,18 +335,16 @@ if file:
 
             st.divider()
             st.write("### 📥 Pipeline Export")
-            st.caption("Stream-clean and export dataset in bounded $O(C)$ memory:")
-            cleaned_csv_data: str = ""
-            if isinstance(file_bytes, bytes):
-                cleaned_csv_data = generate_stream_cleaned_csv(file_bytes)
+            st.caption("Export cleaned dataset reflecting pipeline preprocessing and imputation choices:")
+            cleaned_csv_data: str = export_cleaned_csv(clean_df)
             orig_name = getattr(file, "name", "dataset.csv")
-            export_filename = f"stream_cleaned_{orig_name}" if not str(orig_name).startswith("stream_cleaned_") else str(orig_name)
+            export_filename = f"cleaned_{orig_name}" if not str(orig_name).startswith("cleaned_") else str(orig_name)
             st.download_button(
-                label="Download Stream-Cleaned CSV",
+                label="Download Cleaned CSV",
                 data=cleaned_csv_data,
                 file_name=export_filename,
                 mime="text/csv",
-                key="btn_download_stream_cleaned_csv",
+                key="btn_download_cleaned_csv",
                 use_container_width=True,
             )
 
