@@ -1306,17 +1306,30 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
     # 4. Cross-Feature Bivariate Coupling Discrepancy Rules
     if len(cols) >= 2:
         pearson_matrix = numeric_df.corr(method="pearson").fillna(0.0)
-        spearman_matrix = numeric_df.corr(method="spearman").fillna(0.0)
         for i in range(len(cols)):
             col_a = cols[i]
             for j in range(i + 1, len(cols)):
                 col_b = cols[j]
+                s_a = numeric_df[col_a].dropna()
+                s_b = numeric_df[col_b].dropna()
                 r_p = float(pearson_matrix.loc[col_a, col_b])
-                r_s = float(spearman_matrix.loc[col_a, col_b])
-                r = r_s if abs(r_s) >= abs(r_p) else r_p
-                if abs(r) >= 0.70:
-                    s_a = numeric_df[col_a].dropna()
-                    s_b = numeric_df[col_b].dropna()
+
+                # If raw Pearson is degraded by extreme tail outliers (|z| > 3.5), compute Pearson on non-extreme data
+                if abs(r_p) < 0.70 and len(s_a) >= 5 and len(s_b) >= 5:
+                    std_col_a = float(s_a.std(ddof=0))
+                    std_col_b = float(s_b.std(ddof=0))
+                    if std_col_a > 1e-6 and std_col_b > 1e-6:
+                        z_mask = (
+                            ((numeric_df[col_a] - s_a.mean()).abs() / std_col_a <= 3.5)
+                            & ((numeric_df[col_b] - s_b.mean()).abs() / std_col_b <= 3.5)
+                        )
+                        clean_sub = numeric_df.loc[z_mask, [col_a, col_b]].dropna()
+                        if len(clean_sub) >= 3:
+                            r_p_clean = float(clean_sub[col_a].corr(clean_sub[col_b], method="pearson"))
+                            if not math.isnan(r_p_clean) and abs(r_p_clean) >= 0.70:
+                                r_p = r_p_clean
+
+                if abs(r_p) >= 0.70:
                     mean_a = float(s_a.median())
                     mean_b = float(s_b.median())
                     iqr_a = float(s_a.quantile(0.75) - s_a.quantile(0.25))
@@ -1325,7 +1338,7 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
                     std_b = (iqr_b / 1.349) if iqr_b > 1e-6 else float(s_b.std(ddof=0))
 
                     if std_a > 1e-6 and std_b > 1e-6:
-                        residual_std = math.sqrt(max(1.0 - (r * r), 0.05))
+                        residual_std = math.sqrt(max(1.0 - (r_p * r_p), 0.05))
 
                         def make_coupling_pred(
                             ca: str, cb: str, ma: float, sa: float, mb: float, sb: float, corr: float, r_std: float
@@ -1339,14 +1352,14 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
                                 rule_id=f"R_COUPLING_{col_a}_{col_b}",
                                 name=f"Coupling Discrepancy ({col_a} vs {col_b})",
                                 description=(
-                                    f"Observed value breaks expected strong correlation (r={r:.2f}) "
+                                    f"Observed value breaks expected strong correlation (r={r_p:.2f}) "
                                     f"between {col_a} and {col_b} by > 3.5 residual standard errors"
                                 ),
                                 severity=0.95,
                                 rule_type="cross_feature_coupling",
                                 features=[col_a, col_b],
                                 predicate=make_coupling_pred(
-                                    col_a, col_b, mean_a, std_a, mean_b, std_b, r, residual_std
+                                    col_a, col_b, mean_a, std_a, mean_b, std_b, r_p, residual_std
                                 ),
                             )
                         )
