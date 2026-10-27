@@ -725,6 +725,12 @@ def analyze_dataset(
     builds the DataFrame in-place with lower peak memory and avoids chunk-local imputation drift.
     Chunked iteration is strictly reserved for stream_clean_to_csv() where chunks are flushed
     directly to the output stream and freed in bounded O(C) memory.
+
+    Value Normalization & Continuous Coercion:
+    Regardless of `compute_summary`, infinite values (+/-inf) are normalized to np.nan, and
+    columns detected as 'continuous' (>=90% numeric strings) are coerced to numeric with invalid
+    tokens converted to np.nan. This guarantees that callers receiving un-imputed DataFrames
+    (e.g., when compute_summary=False) do not bypass missingness detection downstream.
     """
     try:
         if isinstance(strategy, int):
@@ -758,10 +764,24 @@ def analyze_dataset(
             raise ValueError("The uploaded CSV file is empty.")
 
         col_types = detect_column_types(raw_df)
-        if not compute_summary:
-            return raw_df, {"column_types": col_types}, None
 
-        df = impute_missing_values(raw_df, strategy=actual_strategy)
+        # Normalize infinite values and coerce continuous object columns
+        normalized_df = raw_df.copy()
+        for col in normalized_df.columns:
+            if pd.api.types.is_numeric_dtype(normalized_df[col]):
+                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+            elif normalized_df[col].isin([np.inf, -np.inf]).any():
+                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+
+        for col in normalized_df.columns:
+            if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(normalized_df[col]):
+                normalized_df[col] = pd.to_numeric(normalized_df[col], errors="coerce")
+                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+
+        if not compute_summary:
+            return normalized_df, {"column_types": col_types}, None
+
+        df = impute_missing_values(normalized_df, strategy=actual_strategy)
         summary = generate_summary(df)
         summary["column_types"] = col_types
         return df, summary, None
@@ -775,6 +795,8 @@ def load_dataset(
     """
     Ingest a CSV tabular dataset, parse it into a DataFrame, and detect column types.
     Delegates to analyze_dataset without running full statistical summary computation.
+    Normalizes +/-inf to np.nan and coerces continuous object columns to numeric with
+    invalid tokens converted to np.nan, ensuring clean downstream imputation handling.
     Fulfills Law 3 contract: returns (df, summary, error).
     """
     if isinstance(file, (bytes, bytearray)):

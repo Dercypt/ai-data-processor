@@ -549,6 +549,57 @@ class TestVisualizations(unittest.TestCase):
         self.assertIsNone(st.session_state["imputation_drift_results"])
         self.assertIsNone(st.session_state["benchmark_results"])
 
+    def test_render_preprocessing_pipeline_normalizes_infinite_without_nans(self):
+        """render_preprocessing_pipeline must normalize +/-inf to NaN and not short-circuit when no NaNs exist."""
+        raw_df = pd.DataFrame({
+            "feat_a": [1.0, 2.0, 3.0, 4.0],
+            "feat_b": [10.0, np.inf, -np.inf, 40.0],
+        })
+        detected = {"feat_a": "continuous", "feat_b": "continuous"}
+
+        mock_st.radio.return_value = "Global Strategy"
+        mock_st.selectbox.return_value = "Mean"
+
+        df_out, summary_out = visualizations.render_preprocessing_pipeline(raw_df, detected)
+        self.assertEqual(len(df_out), 4)
+        self.assertFalse(np.isinf(df_out["feat_b"]).any())
+        self.assertEqual(int(df_out["feat_b"].isnull().sum()), 0)
+        self.assertIn("dataset_summary", mock_st.session_state)
+        self.assertIn("stats", summary_out)
+
+    def test_live_ui_end_to_end_infinite_and_numeric_string_coercion(self):
+        """End-to-end ingestion pipeline: CSVs with +/-inf or corrupted numeric strings must not crash Isolation Forest."""
+        import main
+
+        # 1. CSV with infinite values and no explicit NaNs
+        inf_csv = "feature_x,feature_y\n" + "\n".join([f"{i}.0,{i * 2}.0" for i in range(1, 15)]) + "\n15.0,inf\n"
+        raw_df, summary, err = main.load_dataset(inf_csv.encode("utf-8"))
+        self.assertIsNone(err)
+        self.assertIsNotNone(raw_df)
+        self.assertFalse(np.isinf(raw_df["feature_y"]).any())
+        self.assertTrue(raw_df["feature_y"].isnull().any())
+
+        mock_st.radio.return_value = "Global Strategy"
+        mock_st.selectbox.return_value = "Mean"
+
+        df_out, clean_summary = visualizations.render_preprocessing_pipeline(raw_df, summary["column_types"])
+        self.assertFalse(np.isinf(df_out["feature_y"]).any())
+        self.assertEqual(int(df_out["feature_y"].isnull().sum()), 0)
+        self.assertIn("isolation_forest", clean_summary["outliers"])
+
+        # 2. CSV with continuous numeric strings and corrupted token without explicit NaNs
+        str_csv = "feature_z\n" + "\n".join([f"{i}.0" for i in range(1, 15)]) + "\ncorrupted_val\n"
+        raw_str_df, str_summary, err = main.load_dataset(str_csv.encode("utf-8"))
+        self.assertIsNone(err)
+        self.assertIsNotNone(raw_str_df)
+        self.assertTrue(pd.api.types.is_numeric_dtype(raw_str_df["feature_z"]))
+        self.assertTrue(raw_str_df["feature_z"].isnull().any())
+
+        df_str_out, clean_str_summary = visualizations.render_preprocessing_pipeline(raw_str_df, str_summary["column_types"])
+        self.assertTrue(pd.api.types.is_numeric_dtype(df_str_out["feature_z"]))
+        self.assertEqual(int(df_str_out["feature_z"].isnull().sum()), 0)
+        self.assertIn("stats", clean_str_summary)
+
 
 if __name__ == "__main__":
     unittest.main()

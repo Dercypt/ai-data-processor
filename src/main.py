@@ -6,8 +6,6 @@ from typing import Dict, Optional, Tuple
 
 from analyzer import (
     DEFAULT_CHUNKSIZE,
-    analyze_dataset,
-    detect_column_types,
     load_dataset as analyzer_load_dataset,
     stream_clean_to_csv,
 )
