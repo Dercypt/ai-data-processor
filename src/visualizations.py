@@ -9,6 +9,7 @@ memory footprint benchmarking, and imputation drift dashboards.
 import json
 from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -566,6 +567,14 @@ def render_preprocessing_pipeline(
     - Responsive recomputation: Re-derives dataset summary via cached_generate_summary with
       vectorized anomaly scoring to prevent UI lag on large CSV files
     """
+    # Normalize infinite values prior to missingness evaluation and overview
+    raw_df = raw_df.copy()
+    for col in raw_df.columns:
+        if pd.api.types.is_numeric_dtype(raw_df[col]):
+            raw_df[col] = raw_df[col].replace([np.inf, -np.inf], np.nan)
+        elif raw_df[col].isin([np.inf, -np.inf]).any():
+            raw_df[col] = raw_df[col].replace([np.inf, -np.inf], np.nan)
+
     with st.expander("🛠️ Smart / Automated Preprocessing Pipeline", expanded=True):
         st.write("#### 🔍 Auto-Detected Column Types")
 
