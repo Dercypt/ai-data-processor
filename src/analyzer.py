@@ -1495,8 +1495,9 @@ def compute_wasserstein_1d(u: np.ndarray, v: np.ndarray) -> float:
     """
     Compute 1D first Wasserstein Distance (Earth Mover's Distance) between two empirical distributions.
     W_1(u, v) = integral |F_u(t) - F_v(t)| dt
-    Evaluated as exact L1 distance between sorted order statistics for equal-sized samples,
-    or over uniform quantile discretization grid for unequal sample sizes.
+    Evaluated as exact L1 distance between sorted order statistics for equal-sized samples
+    (preserving full distribution tails), or over uniform quantile discretization grid
+    for unequal sample sizes.
     """
     u_clean = u[~np.isnan(u)]
     v_clean = v[~np.isnan(v)]
@@ -1577,11 +1578,12 @@ def benchmark_imputation_drift(
 ) -> Dict[str, object]:
     """
     Empirical benchmark comparing imputation algorithms against statistical data drift metrics:
-    - Wasserstein Distance (Earth Mover's Distance)
+    - Wasserstein Distance (Earth Mover's Distance with exact order statistics)
     - Kolmogorov-Smirnov Statistic (D_ks)
     - Population Stability Index (PSI)
     - Mean and standard deviation shift
-    Evaluated using controlled Missing Completely At Random (MCAR) injection.
+    Evaluated using controlled Missing Completely At Random (MCAR) injection with full
+    pipeline parity to impute_missing_values (including forward_fill ffill/bfill).
     """
     if not (0.01 <= missing_rate <= 0.50):
         raise ValueError(f"Missing rate must be between 0.01 and 0.50, got {missing_rate}")

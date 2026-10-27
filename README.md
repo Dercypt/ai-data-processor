@@ -9,7 +9,7 @@ A smart data analysis tool that automatically cleans CSV datasets, generates sta
 
 ## Features
 
-* **Automated Cleaning & Preprocessing:** Instantly fills missing values and standardizes data with configurable global and per-column imputation strategies (Mean, Median, Mode, Zero, Forward Fill, Random Draw, Drop), with full parity between empirical distribution drift benchmarks and pipeline execution.
+* **Automated Cleaning & Preprocessing:** Instantly fills missing values and standardizes data with configurable global and per-column imputation strategies (Mean, Median, Mode, Zero, Forward Fill, Random Draw, Drop), with full parity between empirical distribution drift benchmarks (exact 1D Wasserstein metric preserving distribution tails and `.ffill().bfill()` forward fill) and pipeline execution.
 * **Statistical Analysis:** Generates descriptive statistics (mean, median, std dev) automatically.
 * **AI Analyst Agent:** Uses the **Gemini Flash** model to interpret data trends and provide 3 key business insights.
 * **Database Persistence:** Automatically saves analysis results to a local SQLite database for persistent storage across sessions.
