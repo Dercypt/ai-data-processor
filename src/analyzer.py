@@ -568,6 +568,11 @@ def clean_chunk(
             imputation drift. When omitted (None), chunk cleaning relies on window-local statistics
             computed independently per chunk.
 
+    Performance & Redundant Pass Elimination:
+    Leverages `_normalize_and_coerce(chunk)` in a single pass to normalize ±inf and coerce continuous
+    object columns, propagating the detected column types to `impute_missing_values` to eliminate
+    redundant normalization and type detection passes.
+
     Returns:
         Cleaned DataFrame chunk with zero missing values.
     """
@@ -733,8 +738,8 @@ def analyze_dataset(
     Value Normalization & Continuous Coercion:
     Regardless of `compute_summary`, infinite values (+/-inf) are normalized to np.nan, and
     columns detected as 'continuous' (>=90% numeric strings) are coerced to numeric with invalid
-    tokens converted to np.nan. This guarantees that callers receiving un-imputed DataFrames
-    (e.g., when compute_summary=False) do not bypass missingness detection downstream.
+    tokens converted to np.nan via single-pass `_normalize_and_coerce`. When `compute_summary=True`,
+    precomputed column types are propagated to `impute_missing_values` to avoid duplicate passes.
     """
     try:
         if isinstance(strategy, int):
@@ -1223,6 +1228,8 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
     1. Extreme Z-Score tail anomalies (|z| > 3.5)
     2. Extreme IQR outer fences (Q1 - 3*IQR, Q3 + 3*IQR)
     3. Cross-feature bivariate coupling violations (diverging from expected linear regression)
+       Uses Pearson correlation r_p exclusively for the linear residual slope on unranked values,
+       preventing Spearman rank correlation distortion on nonlinear monotonic curves.
     4. Non-negative domain invariant violations
     """
     rules: List[HeuristicRule] = []
