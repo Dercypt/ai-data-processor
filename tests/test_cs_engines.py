@@ -16,6 +16,7 @@ from analyzer import (
     compute_wasserstein_1d,
     evaluate_heuristic_rules,
     generate_summary,
+    impute_missing_values,
     synthesize_heuristic_rules,
 )
 
@@ -367,6 +368,24 @@ class TestImputationDriftBenchmark(unittest.TestCase):
             benchmark_imputation_drift(self.df, missing_rate=0.0)
         with self.assertRaises(ValueError):
             benchmark_imputation_drift(self.df, missing_rate=0.75)
+
+    def test_benchmark_imputation_drift_forward_fill_parity_leading_nas(self) -> None:
+        """benchmark_imputation_drift forward_fill must match production ffill().bfill() on leading missing values."""
+        df_sample = pd.DataFrame({
+            "val": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+        })
+        result = benchmark_imputation_drift(df_sample, missing_rate=0.2, seed=42)
+        ffill_metrics = result["per_feature_results"]["val"]["forward_fill"]
+        self.assertIn("wasserstein", ffill_metrics)
+        self.assertIn("composite_score", ffill_metrics)
+
+        # Direct equivalence test: leading missing values must backfill with first observed value, not sample mean
+        dirty_df = df_sample.copy()
+        dirty_df.loc[0:2, "val"] = np.nan
+        prod_imputed = impute_missing_values(dirty_df, strategy="forward_fill")
+        self.assertEqual(prod_imputed.loc[0, "val"], 40.0)
+        self.assertEqual(prod_imputed.loc[1, "val"], 40.0)
+        self.assertEqual(prod_imputed.loc[2, "val"], 40.0)
 
 
 class TestSummaryIntegration(unittest.TestCase):
