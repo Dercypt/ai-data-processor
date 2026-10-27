@@ -649,6 +649,44 @@ class TestVisualizations(unittest.TestCase):
         self.assertEqual(reloaded["feature1"].iloc[1], 99.0)
         self.assertEqual(reloaded["feature2"].iloc[2], 999.0)
 
+    def test_main_exports_initialize_database_and_main(self):
+        """main module should export initialize_database and main entrypoint in __all__."""
+        import main
+        self.assertIn("initialize_database", main.__all__)
+        self.assertIn("main", main.__all__)
+        self.assertTrue(callable(getattr(main, "initialize_database")))
+        self.assertTrue(callable(getattr(main, "main")))
+
+    def test_import_main_has_no_database_side_effects(self):
+        """Importing main must not execute init_db or UI rendering at import time."""
+        from unittest.mock import patch
+        import sys
+
+        sys.modules.pop("main", None)
+        with patch("database.init_db") as mock_init, patch("database.get_all_entries") as mock_entries:
+            import main  # noqa: F401
+            mock_init.assert_not_called()
+            mock_entries.assert_not_called()
+
+    def test_main_entrypoint_executes_safely_and_propagates_secrets(self):
+        """main entrypoint should execute safely and propagate SQLITE_DB_PATH from secrets to environment."""
+        from unittest.mock import patch
+        import main
+
+        mock_st.secrets = {"SQLITE_DB_PATH": "secrets_configured.db"}
+        old_env = os.environ.pop("SQLITE_DB_PATH", None)
+        try:
+            with patch("main.initialize_database") as mock_init_db, patch("main.get_all_entries", return_value=[]):
+                main.main()
+                mock_init_db.assert_called_once()
+                self.assertEqual(os.environ.get("SQLITE_DB_PATH"), "secrets_configured.db")
+        finally:
+            if old_env is not None:
+                os.environ["SQLITE_DB_PATH"] = old_env
+            else:
+                os.environ.pop("SQLITE_DB_PATH", None)
+            mock_st.secrets = {}
+
 
 if __name__ == "__main__":
     unittest.main()
