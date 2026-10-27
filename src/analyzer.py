@@ -1495,12 +1495,16 @@ def compute_wasserstein_1d(u: np.ndarray, v: np.ndarray) -> float:
     """
     Compute 1D first Wasserstein Distance (Earth Mover's Distance) between two empirical distributions.
     W_1(u, v) = integral |F_u(t) - F_v(t)| dt
-    Evaluated over uniform quantile discretization grid.
+    Evaluated as exact L1 distance between sorted order statistics for equal-sized samples,
+    or over uniform quantile discretization grid for unequal sample sizes.
     """
     u_clean = u[~np.isnan(u)]
     v_clean = v[~np.isnan(v)]
     if len(u_clean) == 0 or len(v_clean) == 0:
         raise ValueError("Arrays must contain at least one non-null value for Wasserstein computation.")
+
+    if len(u_clean) == len(v_clean):
+        return round(float(np.mean(np.abs(np.sort(u_clean) - np.sort(v_clean)))), 4)
 
     q_grid = np.linspace(0.01, 0.99, 100)
     q_u = np.quantile(u_clean, q_grid)
