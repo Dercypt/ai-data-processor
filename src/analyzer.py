@@ -266,11 +266,35 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
     return column_types
 
 
+def _normalize_and_coerce(
+    df: pd.DataFrame,
+    col_types: Optional[Dict[str, str]] = None,
+) -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Normalize infinite values to NaN and coerce continuous object columns to numeric.
+    Detects column types automatically if col_types is not provided.
+    """
+    cleaned = df.copy()
+    for col in cleaned.columns:
+        if pd.api.types.is_numeric_dtype(cleaned[col]) or cleaned[col].isin([np.inf, -np.inf]).any():
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+
+    if col_types is None:
+        col_types = detect_column_types(cleaned)
+
+    for col in cleaned.columns:
+        if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(cleaned[col]):
+            cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
+
+    return cleaned, col_types
+
+
 def impute_missing_values(
     df: pd.DataFrame,
     strategy: Union[str, Dict[str, str]] = "mean",
     default_unspecified: Optional[str] = None,
     seed: Optional[int] = 42,
+    col_types: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
     """
     Impute or clean missing values according to user-configurable strategies.
@@ -289,6 +313,7 @@ def impute_missing_values(
                   or a column-to-strategy mapping dictionary.
         default_unspecified: Optional fallback strategy for columns not present in the strategy dictionary.
         seed: Optional random state integer for reproducible sampling in random_draw strategy (defaults to 42).
+        col_types: Optional mapping of column types. When provided, skips redundant normalization and detection.
 
     Value Normalization & Type Coercion:
     - Infinite Values: Infinite values (np.inf, -np.inf) are normalized to np.nan prior to
@@ -307,20 +332,10 @@ def impute_missing_values(
 
     valid_strategies = {"mean", "median", "mode", "zero", "forward_fill", "random_draw", "drop"}
 
-    # Normalize infinite values prior to imputation
-    normalized_df = df.copy()
-    for col in normalized_df.columns:
-        if pd.api.types.is_numeric_dtype(normalized_df[col]):
-            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-        elif normalized_df[col].isin([np.inf, -np.inf]).any():
-            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-
-    # Coerce object columns detected as "continuous" so invalid string tokens become NaNs
-    col_types = detect_column_types(normalized_df)
-    for col in normalized_df.columns:
-        if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(normalized_df[col]):
-            normalized_df[col] = pd.to_numeric(normalized_df[col], errors="coerce")
-            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+    if col_types is not None:
+        normalized_df = df.copy()
+    else:
+        normalized_df, col_types = _normalize_and_coerce(df)
 
     if isinstance(strategy, str):
         strat_lower = strategy.strip().lower().replace(" ", "_")
