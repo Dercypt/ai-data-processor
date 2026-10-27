@@ -561,6 +561,9 @@ def render_preprocessing_pipeline(
     Render interactive Smart Preprocessing Pipeline controls:
     - Auto-detected column types (continuous, categorical, datetime, text)
     - User-configurable imputation (Mean, Median, Mode, Zero, Forward Fill, Random Draw, Drop)
+    - Value normalization: Defensively normalizes +/-inf to np.nan prior to missingness
+      evaluation to prevent infinite values from short-circuiting imputation and crashing
+      downstream anomaly scoring
     - Type safety gating: Mean/Median options are restricted to verified numeric dtypes
       (pd.api.types.is_numeric_dtype) even if semantically detected as continuous
     - Fault containment: Prevents false-positive success banners if imputation encounters errors

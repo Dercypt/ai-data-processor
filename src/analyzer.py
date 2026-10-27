@@ -725,6 +725,12 @@ def analyze_dataset(
     builds the DataFrame in-place with lower peak memory and avoids chunk-local imputation drift.
     Chunked iteration is strictly reserved for stream_clean_to_csv() where chunks are flushed
     directly to the output stream and freed in bounded O(C) memory.
+
+    Value Normalization & Continuous Coercion:
+    Regardless of `compute_summary`, infinite values (+/-inf) are normalized to np.nan, and
+    columns detected as 'continuous' (>=90% numeric strings) are coerced to numeric with invalid
+    tokens converted to np.nan. This guarantees that callers receiving un-imputed DataFrames
+    (e.g., when compute_summary=False) do not bypass missingness detection downstream.
     """
     try:
         if isinstance(strategy, int):
@@ -789,6 +795,8 @@ def load_dataset(
     """
     Ingest a CSV tabular dataset, parse it into a DataFrame, and detect column types.
     Delegates to analyze_dataset without running full statistical summary computation.
+    Normalizes +/-inf to np.nan and coerces continuous object columns to numeric with
+    invalid tokens converted to np.nan, ensuring clean downstream imputation handling.
     Fulfills Law 3 contract: returns (df, summary, error).
     """
     if isinstance(file, (bytes, bytearray)):
