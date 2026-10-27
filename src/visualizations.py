@@ -627,7 +627,7 @@ def render_preprocessing_pipeline(
                 key="global_imputation_select",
             )
             try:
-                processed_df = impute_missing_values(raw_df, strategy=global_opt.lower().replace(" ", "_"))
+                processed_df = impute_missing_values(raw_df, strategy=global_opt.lower().replace(" ", "_"), seed=42)
                 st.info(f"Applied **{global_opt}** imputation globally across missing features.")
             except Exception as e:
                 imputation_failed = True
@@ -653,7 +653,7 @@ def render_preprocessing_pipeline(
                     col_strategy_map[col_name] = selected_strategy.lower().replace(" ", "_")
 
             try:
-                processed_df = impute_missing_values(raw_df, strategy=col_strategy_map)
+                processed_df = impute_missing_values(raw_df, strategy=col_strategy_map, seed=42)
                 st.info("Applied per-column imputation configuration.")
             except Exception as e:
                 imputation_failed = True
