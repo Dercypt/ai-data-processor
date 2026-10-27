@@ -1495,12 +1495,17 @@ def compute_wasserstein_1d(u: np.ndarray, v: np.ndarray) -> float:
     """
     Compute 1D first Wasserstein Distance (Earth Mover's Distance) between two empirical distributions.
     W_1(u, v) = integral |F_u(t) - F_v(t)| dt
-    Evaluated over uniform quantile discretization grid.
+    Evaluated as exact L1 distance between sorted order statistics for equal-sized samples
+    (preserving full distribution tails), or over uniform quantile discretization grid
+    for unequal sample sizes.
     """
     u_clean = u[~np.isnan(u)]
     v_clean = v[~np.isnan(v)]
     if len(u_clean) == 0 or len(v_clean) == 0:
         raise ValueError("Arrays must contain at least one non-null value for Wasserstein computation.")
+
+    if len(u_clean) == len(v_clean):
+        return round(float(np.mean(np.abs(np.sort(u_clean) - np.sort(v_clean)))), 4)
 
     q_grid = np.linspace(0.01, 0.99, 100)
     q_u = np.quantile(u_clean, q_grid)
@@ -1573,11 +1578,12 @@ def benchmark_imputation_drift(
 ) -> Dict[str, object]:
     """
     Empirical benchmark comparing imputation algorithms against statistical data drift metrics:
-    - Wasserstein Distance (Earth Mover's Distance)
+    - Wasserstein Distance (Earth Mover's Distance with exact order statistics)
     - Kolmogorov-Smirnov Statistic (D_ks)
     - Population Stability Index (PSI)
     - Mean and standard deviation shift
-    Evaluated using controlled Missing Completely At Random (MCAR) injection.
+    Evaluated using controlled Missing Completely At Random (MCAR) injection with full
+    pipeline parity to impute_missing_values (including forward_fill ffill/bfill).
     """
     if not (0.01 <= missing_rate <= 0.50):
         raise ValueError(f"Missing rate must be between 0.01 and 0.50, got {missing_rate}")
@@ -1641,12 +1647,7 @@ def benchmark_imputation_drift(
             elif strat == "zero":
                 y_imp[mask] = 0.0
             elif strat == "forward_fill":
-                last_val = mean_obs
-                for i in range(n):
-                    if mask[i]:
-                        y_imp[i] = last_val
-                    else:
-                        last_val = y_imp[i]
+                y_imp = pd.Series(y_imp).mask(mask).ffill().bfill().to_numpy()
             elif strat == "random_draw":
                 y_imp[mask] = rng.choice(y_obs, size=mask.sum(), replace=True)
 

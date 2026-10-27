@@ -16,6 +16,7 @@ from analyzer import (
     compute_wasserstein_1d,
     evaluate_heuristic_rules,
     generate_summary,
+    impute_missing_values,
     synthesize_heuristic_rules,
 )
 
@@ -314,6 +315,22 @@ class TestImputationDriftBenchmark(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_wasserstein_1d(np.array([]), self.u)
 
+    def test_compute_wasserstein_1d_tail_sensitivity(self) -> None:
+        """Wasserstein 1D must capture extreme tail perturbations without truncating <1% or >99% tails."""
+        arr1 = np.zeros(100, dtype=float)
+        arr2 = np.zeros(100, dtype=float)
+        # Tail outlier at the 100th percentile (index 99)
+        arr2[-1] = 100.0
+        # Under exact 1D W1, mean absolute difference is 100.0 / 100 = 1.0
+        w_tail = compute_wasserstein_1d(arr1, arr2)
+        self.assertEqual(w_tail, 1.0)
+
+        # Tail outlier at the 0th percentile (index 0)
+        arr3 = np.zeros(100, dtype=float)
+        arr3[0] = -50.0
+        w_tail_bottom = compute_wasserstein_1d(arr1, arr3)
+        self.assertEqual(w_tail_bottom, 0.5)
+
     def test_compute_ks_statistic_1d(self) -> None:
         ks_ident = compute_ks_statistic_1d(self.u, self.u)
         self.assertAlmostEqual(ks_ident, 0.0, places=2)
@@ -351,6 +368,42 @@ class TestImputationDriftBenchmark(unittest.TestCase):
             benchmark_imputation_drift(self.df, missing_rate=0.0)
         with self.assertRaises(ValueError):
             benchmark_imputation_drift(self.df, missing_rate=0.75)
+
+    def test_benchmark_imputation_drift_forward_fill_parity_leading_nas(self) -> None:
+        """benchmark_imputation_drift forward_fill must match production ffill().bfill() on leading missing values."""
+        df_sample = pd.DataFrame({
+            "val": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+        })
+        result = benchmark_imputation_drift(df_sample, missing_rate=0.2, seed=42)
+        ffill_metrics = result["per_feature_results"]["val"]["forward_fill"]
+        self.assertIn("wasserstein", ffill_metrics)
+        self.assertIn("composite_score", ffill_metrics)
+
+        # Direct equivalence test: leading missing values must backfill with first observed value, not sample mean
+        dirty_df = df_sample.copy()
+        dirty_df.loc[0:2, "val"] = np.nan
+        prod_imputed = impute_missing_values(dirty_df, strategy="forward_fill")
+        self.assertEqual(prod_imputed.loc[0, "val"], 40.0)
+        self.assertEqual(prod_imputed.loc[1, "val"], 40.0)
+        self.assertEqual(prod_imputed.loc[2, "val"], 40.0)
+
+    def test_compute_wasserstein_1d_edge_cases(self) -> None:
+        """compute_wasserstein_1d handles unequal lengths, single elements, and NaN filtering."""
+        # Single element arrays
+        u_single = np.array([5.0])
+        v_single = np.array([12.0])
+        self.assertEqual(compute_wasserstein_1d(u_single, v_single), 7.0)
+
+        # Unequal lengths fallback to quantile grid
+        u_short = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        v_long = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+        w_unequal = compute_wasserstein_1d(u_short, v_long)
+        self.assertGreater(w_unequal, 0.0)
+
+        # NaN filtering with equal effective lengths
+        u_nans = np.array([1.0, np.nan, 2.0, 3.0, np.nan])
+        v_nans = np.array([np.nan, 1.0, 2.0, np.nan, 3.0])
+        self.assertEqual(compute_wasserstein_1d(u_nans, v_nans), 0.0)
 
 
 class TestSummaryIntegration(unittest.TestCase):
