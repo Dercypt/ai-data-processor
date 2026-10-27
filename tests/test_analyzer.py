@@ -703,6 +703,23 @@ class TestAnalyzer(unittest.TestCase):
             self.assertEqual(int(imputed.isnull().sum().sum()), 0)
             self.assertAlmostEqual(imputed.loc[1, "feat"], 20.0)
 
+    def test_analyze_dataset_skips_redundant_type_detection_in_impute(self):
+        """analyze_dataset passes precomputed col_types to impute_missing_values to skip redundant detection."""
+        csv_bytes = b"feat,cat\n10.0,A\n,B\n30.0,A\n"
+        with unittest.mock.patch("analyzer.impute_missing_values", wraps=impute_missing_values) as spy_impute:
+            df, summary, err = analyze_dataset(csv_bytes, compute_summary=False)
+            self.assertIsNone(err)
+            self.assertEqual(spy_impute.call_count, 0)
+
+        with unittest.mock.patch("analyzer.impute_missing_values", wraps=impute_missing_values) as spy_impute:
+            df, summary, err = analyze_dataset(csv_bytes, compute_summary=True)
+            self.assertIsNone(err)
+            self.assertEqual(spy_impute.call_count, 1)
+            # Verify col_types was explicitly supplied to impute_missing_values
+            called_kwargs = spy_impute.call_args.kwargs
+            self.assertIn("col_types", called_kwargs)
+            self.assertIsNotNone(called_kwargs["col_types"])
+
 
 if __name__ == "__main__":
     unittest.main()

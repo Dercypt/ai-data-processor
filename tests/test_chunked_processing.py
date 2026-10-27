@@ -8,6 +8,7 @@ import io
 import os
 import sys
 import unittest
+import unittest.mock
 import numpy as np
 import pandas as pd
 
@@ -18,6 +19,7 @@ from analyzer import (
     analyze_dataset,
     clean_chunk,
     create_synthetic_benchmark_csv,
+    detect_column_types as from_analyzer_detect,
     evaluate_memory_footprint,
     load_and_clean_chunked,
     read_csv_chunked,
@@ -61,6 +63,17 @@ class TestChunkedProcessing(unittest.TestCase):
         self.assertAlmostEqual(cleaned.loc[0, "num_feat"], expected_mean, places=4)
         self.assertIn(cleaned.loc[1, "cat_feat"], ["Cat_0", "Cat_1", "Cat_2", "Unknown"])
         self.assertFalse(pd.isna(cleaned.loc[2, "text_feat"]))
+
+    def test_clean_chunk_single_column_type_detection_pass(self) -> None:
+        """clean_chunk must not trigger redundant column type detection in impute_missing_values."""
+        chunk = pd.DataFrame({
+            "val": [10.0, np.nan, 30.0],
+            "cat": ["A", "B", None],
+        })
+        with unittest.mock.patch("analyzer.detect_column_types", wraps=from_analyzer_detect) as mock_detect:
+            cleaned = clean_chunk(chunk)
+            self.assertEqual(mock_detect.call_count, 1)
+            self.assertEqual(int(cleaned.isnull().sum().sum()), 0)
 
     def test_read_csv_chunked_various_chunk_sizes(self) -> None:
         """read_csv_chunked must reassemble dataset identically across chunk sizes."""

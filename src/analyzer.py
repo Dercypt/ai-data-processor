@@ -574,18 +574,7 @@ def clean_chunk(
     if chunk.empty:
         return chunk.copy()
 
-    cleaned = chunk.copy()
-    for col in cleaned.columns:
-        if pd.api.types.is_numeric_dtype(cleaned[col]):
-            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
-        elif cleaned[col].isin([np.inf, -np.inf]).any():
-            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
-
-    chunk_types = detect_column_types(cleaned)
-    for col in cleaned.columns:
-        if chunk_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(cleaned[col]):
-            cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce")
-            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+    cleaned, chunk_types = _normalize_and_coerce(chunk)
 
     if fill_values:
         applicable_fills = {k: v for k, v in fill_values.items() if k in cleaned.columns}
@@ -593,7 +582,7 @@ def clean_chunk(
             cleaned = cleaned.fillna(value=applicable_fills)
 
     if cleaned.isnull().any().any():
-        cleaned = impute_missing_values(cleaned, strategy=strategy)
+        cleaned = impute_missing_values(cleaned, strategy=strategy, col_types=chunk_types)
 
     return cleaned
 
@@ -778,25 +767,12 @@ def analyze_dataset(
         if raw_df.empty:
             raise ValueError("The uploaded CSV file is empty.")
 
-        col_types = detect_column_types(raw_df)
-
-        # Normalize infinite values and coerce continuous object columns
-        normalized_df = raw_df.copy()
-        for col in normalized_df.columns:
-            if pd.api.types.is_numeric_dtype(normalized_df[col]):
-                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-            elif normalized_df[col].isin([np.inf, -np.inf]).any():
-                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-
-        for col in normalized_df.columns:
-            if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(normalized_df[col]):
-                normalized_df[col] = pd.to_numeric(normalized_df[col], errors="coerce")
-                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+        normalized_df, col_types = _normalize_and_coerce(raw_df)
 
         if not compute_summary:
             return normalized_df, {"column_types": col_types}, None
 
-        df = impute_missing_values(normalized_df, strategy=actual_strategy)
+        df = impute_missing_values(normalized_df, strategy=actual_strategy, col_types=col_types)
         summary = generate_summary(df)
         summary["column_types"] = col_types
         return df, summary, None
