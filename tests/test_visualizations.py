@@ -649,6 +649,14 @@ class TestVisualizations(unittest.TestCase):
         self.assertEqual(reloaded["feature1"].iloc[1], 99.0)
         self.assertEqual(reloaded["feature2"].iloc[2], 999.0)
 
+    def test_main_exports_initialize_database_and_main(self):
+        """main module should export initialize_database and main entrypoint in __all__."""
+        import main
+        self.assertIn("initialize_database", main.__all__)
+        self.assertIn("main", main.__all__)
+        self.assertTrue(callable(getattr(main, "initialize_database")))
+        self.assertTrue(callable(getattr(main, "main")))
+
 
 if __name__ == "__main__":
     unittest.main()

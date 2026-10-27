@@ -34,6 +34,8 @@ from visualizations import (
 )
 
 __all__ = [
+    "initialize_database",
+    "main",
     "get_current_user_id",
     "load_dataset",
     "generate_stream_cleaned_csv",
@@ -52,12 +54,28 @@ __all__ = [
     "render_imputation_drift_benchmark",
 ]
 
+@st.cache_resource
+def initialize_database() -> None:
+    """Initialize SQLite relational schema and indexes once per server process.
+
+    Decorated with @st.cache_resource to ensure the 5 DDL/DML statements in
+    init_db execute only once during server lifecycle, preventing redundant
+    schema validation on subsequent Streamlit widget reruns.
+    """
+    init_db()
+
+
+def main() -> None:
+    """Streamlit application entry point."""
+    pass
+
+
 # Propagate Streamlit secrets configuration to environment if present
 if hasattr(st, "secrets") and "SQLITE_DB_PATH" in st.secrets and "SQLITE_DB_PATH" not in os.environ:
     os.environ["SQLITE_DB_PATH"] = str(st.secrets["SQLITE_DB_PATH"])
 
-# 1. Initialize DB on app startup
-init_db()
+# 1. Initialize DB on app startup (cached once per server process)
+initialize_database()
 
 st.set_page_config(page_title="AI Data Processor", page_icon="📊", layout="wide")
 st.title("AI Data Processor")
