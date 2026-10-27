@@ -600,6 +600,55 @@ class TestVisualizations(unittest.TestCase):
         self.assertEqual(int(df_str_out["feature_z"].isnull().sum()), 0)
         self.assertIn("stats", clean_str_summary)
 
+    def test_main_exports_export_cleaned_csv(self):
+        """main module should export export_cleaned_csv and convert_df_to_csv in __all__."""
+        import main
+
+        self.assertIn("export_cleaned_csv", main.__all__)
+        self.assertIn("convert_df_to_csv", main.__all__)
+        self.assertTrue(callable(getattr(main, "export_cleaned_csv")))
+        self.assertTrue(callable(getattr(main, "convert_df_to_csv")))
+
+    def test_export_cleaned_csv_serializes_dataframe_correctly(self):
+        """export_cleaned_csv should serialize DataFrame to CSV string preserving values."""
+        import main
+
+        df = pd.DataFrame({"col_a": [1.0, 2.0, 3.0], "col_b": ["x", "y", "z"]})
+        csv_str = main.export_cleaned_csv(df)
+        self.assertIsInstance(csv_str, str)
+        reloaded = pd.read_csv(io.StringIO(csv_str))
+        pd.testing.assert_frame_equal(reloaded, df)
+
+    def test_export_cleaned_csv_preserves_pipeline_imputation_strategy(self):
+        """export_cleaned_csv must faithfully reflect the interactive pipeline's imputed values."""
+        import main
+
+        raw_df = pd.DataFrame({"feat_a": [1.0, 2.0, np.nan, 4.0, 100.0]})
+        detected = {"feat_a": "continuous"}
+
+        mock_st.radio.return_value = "Global Strategy"
+        mock_st.selectbox.return_value = "Median"
+
+        clean_df, _ = visualizations.render_preprocessing_pipeline(raw_df, detected)
+        csv_str = main.export_cleaned_csv(clean_df)
+
+        reloaded = pd.read_csv(io.StringIO(csv_str))
+        self.assertEqual(int(reloaded["feat_a"].isnull().sum()), 0)
+        # Median of [1.0, 2.0, 4.0, 100.0] is 3.0
+        self.assertEqual(reloaded["feat_a"].iloc[2], 3.0)
+
+    def test_generate_stream_cleaned_csv_with_explicit_fill_values(self):
+        """generate_stream_cleaned_csv must apply explicit global fill_values without drift."""
+        import main
+
+        csv_bytes = b"feature1,feature2\n1.0,10\n,20\n3.0,\n"
+        fill_map = {"feature1": 99.0, "feature2": 999.0}
+        cleaned_str = main.generate_stream_cleaned_csv(csv_bytes, chunksize=2, fill_values=fill_map)
+
+        reloaded = pd.read_csv(io.StringIO(cleaned_str))
+        self.assertEqual(reloaded["feature1"].iloc[1], 99.0)
+        self.assertEqual(reloaded["feature2"].iloc[2], 999.0)
+
 
 if __name__ == "__main__":
     unittest.main()
