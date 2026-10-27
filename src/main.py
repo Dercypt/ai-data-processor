@@ -114,10 +114,11 @@ def generate_stream_cleaned_csv(
     chunksize: int = DEFAULT_CHUNKSIZE,
     fill_values: Optional[Dict[str, object]] = None,
 ) -> str:
-    """
-    Stream-clean a tabular dataset in bounded O(C) memory and return cleaned CSV string.
+    """Stream-clean a tabular dataset in bounded O(C) memory and return cleaned CSV string.
+
     Delegates directly to stream_clean_to_csv to ensure memory-bounded execution.
-    Cached via @st.cache_data to prevent redundant O(N) stream cleaning on UI reruns.
+    Cached via @st.cache_data to prevent unconditional O(N) stream cleaning on UI reruns.
+    Accepts optional precomputed `fill_values` to prevent chunk-local imputation drift.
     """
     out_buf = io.StringIO()
     stream_clean_to_csv(io.BytesIO(file_bytes), out_buf, chunksize=chunksize, fill_values=fill_values)
@@ -126,11 +127,12 @@ def generate_stream_cleaned_csv(
 
 @st.cache_data
 def export_cleaned_csv(df: pd.DataFrame) -> str:
-    """
-    Convert a cleaned DataFrame to a CSV string with Streamlit caching.
+    """Convert a cleaned DataFrame to a CSV string with Streamlit caching.
 
     Cached via @st.cache_data to prevent redundant O(N) serialization on UI reruns.
-    Ensures pipeline downloads reflect the user's actual preprocessing and imputation choices.
+    Ensures exported downloads faithfully reflect the user's interactive preprocessing
+    and imputation choices configured in render_preprocessing_pipeline without
+    chunk-local statistical drift.
     """
     return df.to_csv(index=False)
 
