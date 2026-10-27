@@ -1645,12 +1645,7 @@ def benchmark_imputation_drift(
             elif strat == "zero":
                 y_imp[mask] = 0.0
             elif strat == "forward_fill":
-                last_val = mean_obs
-                for i in range(n):
-                    if mask[i]:
-                        y_imp[i] = last_val
-                    else:
-                        last_val = y_imp[i]
+                y_imp = pd.Series(y_imp).mask(mask).ffill().bfill().to_numpy()
             elif strat == "random_draw":
                 y_imp[mask] = rng.choice(y_obs, size=mask.sum(), replace=True)
 
