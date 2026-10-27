@@ -600,6 +600,25 @@ class TestVisualizations(unittest.TestCase):
         self.assertEqual(int(df_str_out["feature_z"].isnull().sum()), 0)
         self.assertIn("stats", clean_str_summary)
 
+    def test_main_exports_export_cleaned_csv(self):
+        """main module should export export_cleaned_csv and convert_df_to_csv in __all__."""
+        import main
+
+        self.assertIn("export_cleaned_csv", main.__all__)
+        self.assertIn("convert_df_to_csv", main.__all__)
+        self.assertTrue(callable(getattr(main, "export_cleaned_csv")))
+        self.assertTrue(callable(getattr(main, "convert_df_to_csv")))
+
+    def test_export_cleaned_csv_serializes_dataframe_correctly(self):
+        """export_cleaned_csv should serialize DataFrame to CSV string preserving values."""
+        import main
+
+        df = pd.DataFrame({"col_a": [1.0, 2.0, 3.0], "col_b": ["x", "y", "z"]})
+        csv_str = main.export_cleaned_csv(df)
+        self.assertIsInstance(csv_str, str)
+        reloaded = pd.read_csv(io.StringIO(csv_str))
+        pd.testing.assert_frame_equal(reloaded, df)
+
 
 if __name__ == "__main__":
     unittest.main()

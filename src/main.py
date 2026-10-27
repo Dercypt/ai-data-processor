@@ -37,6 +37,8 @@ __all__ = [
     "get_current_user_id",
     "load_dataset",
     "generate_stream_cleaned_csv",
+    "export_cleaned_csv",
+    "convert_df_to_csv",
     "clear_analysis_session_state",
     "render_sidebar_insights",
     "render_distribution_chart",
@@ -106,6 +108,7 @@ def load_dataset(
     return analyzer_load_dataset(file_bytes)
 
 
+@st.cache_data
 def generate_stream_cleaned_csv(
     file_bytes: bytes,
     chunksize: int = DEFAULT_CHUNKSIZE,
@@ -114,10 +117,25 @@ def generate_stream_cleaned_csv(
     """
     Stream-clean a tabular dataset in bounded O(C) memory and return cleaned CSV string.
     Delegates directly to stream_clean_to_csv to ensure memory-bounded execution.
+    Cached via @st.cache_data to prevent redundant O(N) stream cleaning on UI reruns.
     """
     out_buf = io.StringIO()
     stream_clean_to_csv(io.BytesIO(file_bytes), out_buf, chunksize=chunksize, fill_values=fill_values)
     return out_buf.getvalue()
+
+
+@st.cache_data
+def export_cleaned_csv(df: pd.DataFrame) -> str:
+    """
+    Convert a cleaned DataFrame to a CSV string with Streamlit caching.
+
+    Cached via @st.cache_data to prevent redundant O(N) serialization on UI reruns.
+    Ensures pipeline downloads reflect the user's actual preprocessing and imputation choices.
+    """
+    return df.to_csv(index=False)
+
+
+convert_df_to_csv = export_cleaned_csv
 
 
 # --- SIDEBAR: AUTHENTICATION & WORKSPACE ---
