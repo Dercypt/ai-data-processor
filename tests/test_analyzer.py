@@ -481,6 +481,29 @@ class TestAnalyzer(unittest.TestCase):
         self.assertIn("column_types", summary)
         self.assertNotIn("dependency_graph", summary)
 
+    def test_load_dataset_normalizes_infinite_values_without_nans(self):
+        """load_dataset must normalize +/-inf to NaN even when no explicit NaNs exist."""
+        csv_bytes = b"feature_a,feature_b\n10.0,1.0\n20.0,inf\n30.0,-inf\n40.0,4.0\n"
+        df, summary, err = load_dataset(csv_bytes)
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(summary)
+        # feature_b had inf and -inf, must be normalized to NaN
+        self.assertFalse(np.isinf(df["feature_b"]).any())
+        self.assertEqual(int(df["feature_b"].isnull().sum()), 2)
+        self.assertTrue(df["feature_b"].isnull().any())
+
+    def test_load_dataset_coerces_continuous_object_columns_without_nans(self):
+        """load_dataset must coerce continuous object columns so invalid tokens become NaNs."""
+        rows = [f"{i}.0" for i in range(1, 10)] + ["corrupted_token"]
+        csv_str = "num_col\n" + "\n".join(rows) + "\n"
+        df, summary, err = load_dataset(csv_str.encode("utf-8"))
+        self.assertIsNone(err)
+        self.assertIsNotNone(df)
+        self.assertTrue(pd.api.types.is_numeric_dtype(df["num_col"]))
+        self.assertEqual(int(df["num_col"].isnull().sum()), 1)
+        self.assertTrue(df["num_col"].isnull().any())
+
 
     def test_impute_missing_values_normalizes_infinite_values(self):
         """impute_missing_values must normalize +/-inf to NaN and impute them cleanly without RuntimeWarnings."""
