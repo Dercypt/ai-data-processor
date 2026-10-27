@@ -569,6 +569,9 @@ def render_preprocessing_pipeline(
     - Fault containment: Prevents false-positive success banners if imputation encounters errors
     - Responsive recomputation: Re-derives dataset summary via cached_generate_summary with
       vectorized anomaly scoring to prevent UI lag on large CSV files
+    - Deterministic Sampling: Passes seed=42 to impute_missing_values for Random Draw imputation,
+      preventing silent dataset mutation across Streamlit UI reruns and preserving @st.cache_data
+      on cached_generate_summary
     """
     # Normalize infinite values prior to missingness evaluation and overview
     raw_df = raw_df.copy()
