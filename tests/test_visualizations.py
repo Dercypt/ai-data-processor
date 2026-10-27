@@ -353,6 +353,68 @@ class TestVisualizations(unittest.TestCase):
         finally:
             mock_st.selectbox.side_effect = None
 
+    def test_render_preprocessing_pipeline_random_draw_determinism_across_reruns(self):
+        """render_preprocessing_pipeline with Random Draw must produce deterministic output across UI reruns."""
+        dirty_df = pd.DataFrame({
+            "val": [10.0, 20.0, 30.0, 40.0, 50.0, np.nan, np.nan, np.nan],
+            "cat": ["a", "b", "c", "d", np.nan, np.nan, np.nan, "e"],
+        })
+        detected = {"val": "continuous", "cat": "categorical"}
+
+        # 1. Global Strategy: Random Draw
+        mock_st.reset_mock()
+        mock_st.session_state = {}
+        mock_st.radio.return_value = "Global Strategy"
+        mock_st.selectbox.return_value = "Random Draw"
+
+        df_run1, _ = visualizations.render_preprocessing_pipeline(dirty_df, detected)
+        df_run2, _ = visualizations.render_preprocessing_pipeline(dirty_df, detected)
+        pd.testing.assert_frame_equal(df_run1, df_run2)
+        self.assertEqual(int(df_run1.isnull().sum().sum()), 0)
+
+        # 2. Per-Column Strategy: Random Draw
+        mock_st.reset_mock()
+        mock_st.session_state = {}
+        mock_st.radio.return_value = "Per-Column Strategy"
+
+        def fake_selectbox(label, options, key=None):
+            return "Random Draw"
+
+        mock_st.selectbox.side_effect = fake_selectbox
+        try:
+            df_col1, _ = visualizations.render_preprocessing_pipeline(dirty_df, detected)
+            df_col2, _ = visualizations.render_preprocessing_pipeline(dirty_df, detected)
+            pd.testing.assert_frame_equal(df_col1, df_col2)
+            self.assertEqual(int(df_col1.isnull().sum().sum()), 0)
+        finally:
+            mock_st.selectbox.side_effect = None
+
+    def test_render_preprocessing_pipeline_passes_seed_42_to_impute_missing_values(self):
+        """render_preprocessing_pipeline explicitly passes seed=42 to impute_missing_values."""
+        dirty_df = pd.DataFrame({"x": [1.0, np.nan, 2.0]})
+        detected = {"x": "continuous"}
+
+        with unittest.mock.patch("visualizations.impute_missing_values", wraps=visualizations.impute_missing_values) as spy_impute:
+            # Global strategy
+            mock_st.reset_mock()
+            mock_st.session_state = {}
+            mock_st.radio.return_value = "Global Strategy"
+            mock_st.selectbox.return_value = "Random Draw"
+
+            visualizations.render_preprocessing_pipeline(dirty_df, detected)
+            spy_impute.assert_called_with(unittest.mock.ANY, strategy="random_draw", seed=42)
+
+            spy_impute.reset_mock()
+
+            # Per-column strategy
+            mock_st.reset_mock()
+            mock_st.session_state = {}
+            mock_st.radio.return_value = "Per-Column Strategy"
+            mock_st.selectbox.return_value = "Random Draw"
+
+            visualizations.render_preprocessing_pipeline(dirty_df, detected)
+            spy_impute.assert_called_with(unittest.mock.ANY, strategy={"x": "random_draw"}, seed=42)
+
     def test_render_structured_insights(self):
         """render_structured_insights should render summary, risks, and recommendations."""
         insights_dict = {
