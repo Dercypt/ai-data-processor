@@ -657,6 +657,17 @@ class TestVisualizations(unittest.TestCase):
         self.assertTrue(callable(getattr(main, "initialize_database")))
         self.assertTrue(callable(getattr(main, "main")))
 
+    def test_import_main_has_no_database_side_effects(self):
+        """Importing main must not execute init_db or UI rendering at import time."""
+        from unittest.mock import patch
+        import sys
+
+        sys.modules.pop("main", None)
+        with patch("database.init_db") as mock_init, patch("database.get_all_entries") as mock_entries:
+            import main  # noqa: F401
+            mock_init.assert_not_called()
+            mock_entries.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
