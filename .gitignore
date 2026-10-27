@@ -11,6 +11,10 @@ venv/
 # Local Data
 *.db
 history.db
+*.db-wal
+*.db-shm
+history.db-wal
+history.db-shm
 
 # Logs
 nohup.out
