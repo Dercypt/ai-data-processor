@@ -139,6 +139,47 @@ class TestHeuristicRuleEngine(unittest.TestCase):
         self.assertIn("extreme_tail", rule_types)
         self.assertIn("cross_feature_coupling", rule_types)
 
+    def test_synthesize_heuristic_rules_uses_pearson_exclusively(self) -> None:
+        """synthesize_heuristic_rules must use Pearson correlation exclusively for linear coupling rules."""
+        # Nonlinear monotonic relationship: y = exp(x)
+        # Spearman rank correlation is 1.0, but Pearson correlation is ~0.69 (< 0.70 threshold)
+        x = np.linspace(0.0, 10.0, 100)
+        y = np.exp(x)
+        nonlinear_df = pd.DataFrame({"feat_x": x, "feat_y": y})
+
+        rules = synthesize_heuristic_rules(nonlinear_df)
+        coupling_rules = [r for r in rules if r.rule_type == "cross_feature_coupling"]
+
+        # Because Pearson correlation is < 0.70, no linear coupling rule should be synthesized
+        self.assertEqual(
+            len(coupling_rules),
+            0,
+            "Spearman rank correlation must not trigger linear coupling rules when Pearson r < 0.70",
+        )
+
+        # For a truly linear relationship with Pearson r >= 0.70, rule description and slope must match Pearson
+        np.random.seed(42)
+        lin_a = np.linspace(0.0, 50.0, 100)
+        lin_b = lin_a * 1.5 + np.random.normal(0.0, 2.0, size=100)
+        linear_df = pd.DataFrame({"feat_a": lin_a, "feat_b": lin_b})
+        pearson_val = float(linear_df["feat_a"].corr(linear_df["feat_b"], method="pearson"))
+        lin_rules = synthesize_heuristic_rules(linear_df)
+        lin_coupling = [r for r in lin_rules if r.rule_type == "cross_feature_coupling"]
+        self.assertGreater(len(lin_coupling), 0)
+        self.assertIn(f"r={pearson_val:.2f}", lin_coupling[0].description)
+
+    def test_synthesize_heuristic_rules_constant_and_insufficient_features(self) -> None:
+        """synthesize_heuristic_rules handles constant features and single-feature DataFrames without error."""
+        # Single feature DataFrame
+        single_df = pd.DataFrame({"feat_1": [1.0, 2.0, 3.0, 4.0, 5.0]})
+        rules_single = synthesize_heuristic_rules(single_df)
+        self.assertEqual(len([r for r in rules_single if r.rule_type == "cross_feature_coupling"]), 0)
+
+        # Constant features (zero variance)
+        constant_df = pd.DataFrame({"const_a": [5.0] * 50, "const_b": [10.0] * 50})
+        rules_const = synthesize_heuristic_rules(constant_df)
+        self.assertEqual(len([r for r in rules_const if r.rule_type == "cross_feature_coupling"]), 0)
+
     def test_evaluate_heuristic_rules_and_attribution(self) -> None:
         result = evaluate_heuristic_rules(self.df)
         self.assertGreater(result["total_anomalies"], 0)

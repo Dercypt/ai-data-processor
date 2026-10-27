@@ -1,5 +1,6 @@
 import io
 import unittest
+import unittest.mock
 import pandas as pd
 import numpy as np
 
@@ -8,6 +9,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from analyzer import (
+    _normalize_and_coerce,
     analyze_dataset,
     benchmark_imputation_drift,
     compute_correlations,
@@ -659,6 +661,88 @@ class TestAnalyzer(unittest.TestCase):
         self.assertEqual(res4.index.tolist(), [100 + i for i in range(10)])
         self.assertTrue(pd.api.types.is_numeric_dtype(res4["feat"]))
         self.assertEqual(int(res4["feat"].isnull().sum()), 0)
+
+    def test_normalize_and_coerce_basic(self):
+        """_normalize_and_coerce normalizes +/-inf to NaN and coerces continuous object columns."""
+        df = pd.DataFrame({
+            "numeric_inf": [1.0, np.inf, -np.inf, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+            "continuous_str": ["10", "20", "30", "40", "50", "60", "70", "80", "90", "bad_token"],
+            "category": ["A", "B", "A", "B", "A", "B", "A", "B", "A", "B"],
+        })
+        cleaned, col_types = _normalize_and_coerce(df)
+        self.assertTrue(np.isnan(cleaned.loc[1, "numeric_inf"]))
+        self.assertTrue(np.isnan(cleaned.loc[2, "numeric_inf"]))
+        self.assertFalse(np.isinf(cleaned["numeric_inf"]).any())
+        self.assertTrue(pd.api.types.is_numeric_dtype(cleaned["continuous_str"]))
+        self.assertTrue(np.isnan(cleaned.loc[9, "continuous_str"]))
+        self.assertEqual(col_types.get("continuous_str"), "continuous")
+        self.assertEqual(col_types.get("category"), "categorical")
+
+    def test_normalize_and_coerce_with_precomputed_col_types(self):
+        """_normalize_and_coerce reuses provided col_types without invoking detect_column_types."""
+        df = pd.DataFrame({
+            "col_a": [1.0, np.inf, 3.0],
+            "col_b": ["100", "200", "bad"],
+        })
+        col_types = {"col_a": "continuous", "col_b": "continuous"}
+        with unittest.mock.patch("analyzer.detect_column_types") as mock_detect:
+            cleaned, res_types = _normalize_and_coerce(df, col_types=col_types)
+            mock_detect.assert_not_called()
+            self.assertEqual(res_types, col_types)
+            self.assertTrue(pd.api.types.is_numeric_dtype(cleaned["col_b"]))
+            self.assertTrue(np.isnan(cleaned.loc[2, "col_b"]))
+
+    def test_impute_missing_values_skips_detection_when_col_types_provided(self):
+        """impute_missing_values skips _normalize_and_coerce and detect_column_types when col_types is passed."""
+        df = pd.DataFrame({
+            "feat": [10.0, np.nan, 30.0],
+        })
+        with unittest.mock.patch("analyzer._normalize_and_coerce") as mock_norm:
+            imputed = impute_missing_values(df, strategy="mean", col_types={"feat": "continuous"})
+            mock_norm.assert_not_called()
+            self.assertEqual(int(imputed.isnull().sum().sum()), 0)
+            self.assertAlmostEqual(imputed.loc[1, "feat"], 20.0)
+
+    def test_analyze_dataset_skips_redundant_type_detection_in_impute(self):
+        """analyze_dataset passes precomputed col_types to impute_missing_values to skip redundant detection."""
+        csv_bytes = b"feat,cat\n10.0,A\n,B\n30.0,A\n"
+        with unittest.mock.patch("analyzer.impute_missing_values", wraps=impute_missing_values) as spy_impute:
+            df, summary, err = analyze_dataset(csv_bytes, compute_summary=False)
+            self.assertIsNone(err)
+            self.assertEqual(spy_impute.call_count, 0)
+
+        with unittest.mock.patch("analyzer.impute_missing_values", wraps=impute_missing_values) as spy_impute:
+            df, summary, err = analyze_dataset(csv_bytes, compute_summary=True)
+            self.assertIsNone(err)
+            self.assertEqual(spy_impute.call_count, 1)
+            # Verify col_types was explicitly supplied to impute_missing_values
+            called_kwargs = spy_impute.call_args.kwargs
+            self.assertIn("col_types", called_kwargs)
+            self.assertIsNotNone(called_kwargs["col_types"])
+
+    def test_normalize_and_coerce_edge_cases(self):
+        """_normalize_and_coerce handles empty DataFrames, all-inf columns, and non-numeric columns cleanly."""
+        # 1. Empty DataFrame
+        empty_df = pd.DataFrame()
+        cleaned_empty, types_empty = _normalize_and_coerce(empty_df)
+        self.assertTrue(cleaned_empty.empty)
+        self.assertEqual(types_empty, {})
+
+        # 2. All-inf column
+        all_inf_df = pd.DataFrame({"inf_col": [np.inf, -np.inf, np.inf]})
+        cleaned_inf, types_inf = _normalize_and_coerce(all_inf_df)
+        self.assertTrue(cleaned_inf["inf_col"].isnull().all())
+        self.assertEqual(types_inf["inf_col"], "continuous")
+
+        # 3. Pure categorical and text columns without any numeric/continuous columns
+        text_df = pd.DataFrame({
+            "cat": ["low", "medium", "high"],
+            "free_text": ["quick brown fox jumps", "over the lazy dog in garden", "machine learning test suite run"],
+        })
+        cleaned_text, types_text = _normalize_and_coerce(text_df)
+        self.assertEqual(types_text["cat"], "categorical")
+        self.assertEqual(types_text["free_text"], "text")
+        self.assertEqual(len(cleaned_text), 3)
 
 
 if __name__ == "__main__":

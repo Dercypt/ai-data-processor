@@ -266,11 +266,35 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
     return column_types
 
 
+def _normalize_and_coerce(
+    df: pd.DataFrame,
+    col_types: Optional[Dict[str, str]] = None,
+) -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Normalize infinite values to NaN and coerce continuous object columns to numeric.
+    Detects column types automatically if col_types is not provided.
+    """
+    cleaned = df.copy()
+    for col in cleaned.columns:
+        if pd.api.types.is_numeric_dtype(cleaned[col]) or cleaned[col].isin([np.inf, -np.inf]).any():
+            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+
+    if col_types is None:
+        col_types = detect_column_types(cleaned)
+
+    for col in cleaned.columns:
+        if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(cleaned[col]):
+            cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
+
+    return cleaned, col_types
+
+
 def impute_missing_values(
     df: pd.DataFrame,
     strategy: Union[str, Dict[str, str]] = "mean",
     default_unspecified: Optional[str] = None,
     seed: Optional[int] = 42,
+    col_types: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
     """
     Impute or clean missing values according to user-configurable strategies.
@@ -289,6 +313,7 @@ def impute_missing_values(
                   or a column-to-strategy mapping dictionary.
         default_unspecified: Optional fallback strategy for columns not present in the strategy dictionary.
         seed: Optional random state integer for reproducible sampling in random_draw strategy (defaults to 42).
+        col_types: Optional mapping of column types. When provided, skips redundant normalization and detection.
 
     Value Normalization & Type Coercion:
     - Infinite Values: Infinite values (np.inf, -np.inf) are normalized to np.nan prior to
@@ -307,20 +332,10 @@ def impute_missing_values(
 
     valid_strategies = {"mean", "median", "mode", "zero", "forward_fill", "random_draw", "drop"}
 
-    # Normalize infinite values prior to imputation
-    normalized_df = df.copy()
-    for col in normalized_df.columns:
-        if pd.api.types.is_numeric_dtype(normalized_df[col]):
-            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-        elif normalized_df[col].isin([np.inf, -np.inf]).any():
-            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-
-    # Coerce object columns detected as "continuous" so invalid string tokens become NaNs
-    col_types = detect_column_types(normalized_df)
-    for col in normalized_df.columns:
-        if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(normalized_df[col]):
-            normalized_df[col] = pd.to_numeric(normalized_df[col], errors="coerce")
-            normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+    if col_types is not None:
+        normalized_df = df.copy()
+    else:
+        normalized_df, col_types = _normalize_and_coerce(df)
 
     if isinstance(strategy, str):
         strat_lower = strategy.strip().lower().replace(" ", "_")
@@ -553,24 +568,18 @@ def clean_chunk(
             imputation drift. When omitted (None), chunk cleaning relies on window-local statistics
             computed independently per chunk.
 
+    Performance & Redundant Pass Elimination:
+    Leverages `_normalize_and_coerce(chunk)` in a single pass to normalize ±inf and coerce continuous
+    object columns, propagating the detected column types to `impute_missing_values` to eliminate
+    redundant normalization and type detection passes.
+
     Returns:
         Cleaned DataFrame chunk with zero missing values.
     """
     if chunk.empty:
         return chunk.copy()
 
-    cleaned = chunk.copy()
-    for col in cleaned.columns:
-        if pd.api.types.is_numeric_dtype(cleaned[col]):
-            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
-        elif cleaned[col].isin([np.inf, -np.inf]).any():
-            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
-
-    chunk_types = detect_column_types(cleaned)
-    for col in cleaned.columns:
-        if chunk_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(cleaned[col]):
-            cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce")
-            cleaned[col] = cleaned[col].replace([np.inf, -np.inf], np.nan)
+    cleaned, chunk_types = _normalize_and_coerce(chunk)
 
     if fill_values:
         applicable_fills = {k: v for k, v in fill_values.items() if k in cleaned.columns}
@@ -578,7 +587,7 @@ def clean_chunk(
             cleaned = cleaned.fillna(value=applicable_fills)
 
     if cleaned.isnull().any().any():
-        cleaned = impute_missing_values(cleaned, strategy=strategy)
+        cleaned = impute_missing_values(cleaned, strategy=strategy, col_types=chunk_types)
 
     return cleaned
 
@@ -729,8 +738,8 @@ def analyze_dataset(
     Value Normalization & Continuous Coercion:
     Regardless of `compute_summary`, infinite values (+/-inf) are normalized to np.nan, and
     columns detected as 'continuous' (>=90% numeric strings) are coerced to numeric with invalid
-    tokens converted to np.nan. This guarantees that callers receiving un-imputed DataFrames
-    (e.g., when compute_summary=False) do not bypass missingness detection downstream.
+    tokens converted to np.nan via single-pass `_normalize_and_coerce`. When `compute_summary=True`,
+    precomputed column types are propagated to `impute_missing_values` to avoid duplicate passes.
     """
     try:
         if isinstance(strategy, int):
@@ -763,25 +772,12 @@ def analyze_dataset(
         if raw_df.empty:
             raise ValueError("The uploaded CSV file is empty.")
 
-        col_types = detect_column_types(raw_df)
-
-        # Normalize infinite values and coerce continuous object columns
-        normalized_df = raw_df.copy()
-        for col in normalized_df.columns:
-            if pd.api.types.is_numeric_dtype(normalized_df[col]):
-                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-            elif normalized_df[col].isin([np.inf, -np.inf]).any():
-                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
-
-        for col in normalized_df.columns:
-            if col_types.get(str(col)) == "continuous" and not pd.api.types.is_numeric_dtype(normalized_df[col]):
-                normalized_df[col] = pd.to_numeric(normalized_df[col], errors="coerce")
-                normalized_df[col] = normalized_df[col].replace([np.inf, -np.inf], np.nan)
+        normalized_df, col_types = _normalize_and_coerce(raw_df)
 
         if not compute_summary:
             return normalized_df, {"column_types": col_types}, None
 
-        df = impute_missing_values(normalized_df, strategy=actual_strategy)
+        df = impute_missing_values(normalized_df, strategy=actual_strategy, col_types=col_types)
         summary = generate_summary(df)
         summary["column_types"] = col_types
         return df, summary, None
@@ -1232,6 +1228,8 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
     1. Extreme Z-Score tail anomalies (|z| > 3.5)
     2. Extreme IQR outer fences (Q1 - 3*IQR, Q3 + 3*IQR)
     3. Cross-feature bivariate coupling violations (diverging from expected linear regression)
+       Uses Pearson correlation r_p exclusively for the linear residual slope on unranked values,
+       preventing Spearman rank correlation distortion on nonlinear monotonic curves.
     4. Non-negative domain invariant violations
     """
     rules: List[HeuristicRule] = []
@@ -1306,17 +1304,30 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
     # 4. Cross-Feature Bivariate Coupling Discrepancy Rules
     if len(cols) >= 2:
         pearson_matrix = numeric_df.corr(method="pearson").fillna(0.0)
-        spearman_matrix = numeric_df.corr(method="spearman").fillna(0.0)
         for i in range(len(cols)):
             col_a = cols[i]
             for j in range(i + 1, len(cols)):
                 col_b = cols[j]
+                s_a = numeric_df[col_a].dropna()
+                s_b = numeric_df[col_b].dropna()
                 r_p = float(pearson_matrix.loc[col_a, col_b])
-                r_s = float(spearman_matrix.loc[col_a, col_b])
-                r = r_s if abs(r_s) >= abs(r_p) else r_p
-                if abs(r) >= 0.70:
-                    s_a = numeric_df[col_a].dropna()
-                    s_b = numeric_df[col_b].dropna()
+
+                # If raw Pearson is degraded by extreme tail outliers (|z| > 3.5), compute Pearson on non-extreme data
+                if abs(r_p) < 0.70 and len(s_a) >= 5 and len(s_b) >= 5:
+                    std_col_a = float(s_a.std(ddof=0))
+                    std_col_b = float(s_b.std(ddof=0))
+                    if std_col_a > 1e-6 and std_col_b > 1e-6:
+                        z_mask = (
+                            ((numeric_df[col_a] - s_a.mean()).abs() / std_col_a <= 3.5)
+                            & ((numeric_df[col_b] - s_b.mean()).abs() / std_col_b <= 3.5)
+                        )
+                        clean_sub = numeric_df.loc[z_mask, [col_a, col_b]].dropna()
+                        if len(clean_sub) >= 3:
+                            r_p_clean = float(clean_sub[col_a].corr(clean_sub[col_b], method="pearson"))
+                            if not math.isnan(r_p_clean) and abs(r_p_clean) >= 0.70:
+                                r_p = r_p_clean
+
+                if abs(r_p) >= 0.70:
                     mean_a = float(s_a.median())
                     mean_b = float(s_b.median())
                     iqr_a = float(s_a.quantile(0.75) - s_a.quantile(0.25))
@@ -1325,7 +1336,7 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
                     std_b = (iqr_b / 1.349) if iqr_b > 1e-6 else float(s_b.std(ddof=0))
 
                     if std_a > 1e-6 and std_b > 1e-6:
-                        residual_std = math.sqrt(max(1.0 - (r * r), 0.05))
+                        residual_std = math.sqrt(max(1.0 - (r_p * r_p), 0.05))
 
                         def make_coupling_pred(
                             ca: str, cb: str, ma: float, sa: float, mb: float, sb: float, corr: float, r_std: float
@@ -1339,14 +1350,14 @@ def synthesize_heuristic_rules(df: pd.DataFrame) -> List[HeuristicRule]:
                                 rule_id=f"R_COUPLING_{col_a}_{col_b}",
                                 name=f"Coupling Discrepancy ({col_a} vs {col_b})",
                                 description=(
-                                    f"Observed value breaks expected strong correlation (r={r:.2f}) "
+                                    f"Observed value breaks expected strong correlation (r={r_p:.2f}) "
                                     f"between {col_a} and {col_b} by > 3.5 residual standard errors"
                                 ),
                                 severity=0.95,
                                 rule_type="cross_feature_coupling",
                                 features=[col_a, col_b],
                                 predicate=make_coupling_pred(
-                                    col_a, col_b, mean_a, std_a, mean_b, std_b, r, residual_std
+                                    col_a, col_b, mean_a, std_a, mean_b, std_b, r_p, residual_std
                                 ),
                             )
                         )
