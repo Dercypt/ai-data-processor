@@ -277,6 +277,28 @@ class TestAnalyzer(unittest.TestCase):
         self.assertTrue(imputed_1.loc[2, "cat_b"] in ["alpha", "beta"])
         self.assertTrue(imputed_1.loc[4, "cat_b"] in ["alpha", "beta"])
 
+    def test_impute_missing_values_default_seed_determinism(self):
+        """impute_missing_values defaults to seed=42 ensuring deterministic random draw across calls."""
+        df_missing = pd.DataFrame({
+            "val": [1.0, 2.0, 3.0, 4.0, 5.0, np.nan, np.nan, np.nan],
+            "cat": ["x", "y", "z", np.nan, np.nan, np.nan, "x", "y"],
+        })
+        # Global strategy without explicit seed parameter
+        run_1 = impute_missing_values(df_missing, strategy="random_draw")
+        run_2 = impute_missing_values(df_missing, strategy="random_draw")
+        pd.testing.assert_frame_equal(run_1, run_2)
+        self.assertEqual(run_1.isnull().sum().sum(), 0)
+
+        # Per-column strategy without explicit seed parameter
+        dict_run_1 = impute_missing_values(df_missing, strategy={"val": "random_draw", "cat": "random_draw"})
+        dict_run_2 = impute_missing_values(df_missing, strategy={"val": "random_draw", "cat": "random_draw"})
+        pd.testing.assert_frame_equal(dict_run_1, dict_run_2)
+        self.assertEqual(dict_run_1.isnull().sum().sum(), 0)
+
+        # Default run must match explicit seed=42
+        explicit_run = impute_missing_values(df_missing, strategy="random_draw", seed=42)
+        pd.testing.assert_frame_equal(run_1, explicit_run)
+
     def test_impute_missing_values_global_drop(self):
         df_missing = pd.DataFrame({
             "num_a": [1.0, 2.0, np.nan, 4.0],

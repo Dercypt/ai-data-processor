@@ -569,6 +569,9 @@ def render_preprocessing_pipeline(
     - Fault containment: Prevents false-positive success banners if imputation encounters errors
     - Responsive recomputation: Re-derives dataset summary via cached_generate_summary with
       vectorized anomaly scoring to prevent UI lag on large CSV files
+    - Deterministic Sampling: Passes seed=42 to impute_missing_values for Random Draw imputation,
+      preventing silent dataset mutation across Streamlit UI reruns and preserving @st.cache_data
+      on cached_generate_summary
     """
     # Normalize infinite values prior to missingness evaluation and overview
     raw_df = raw_df.copy()
@@ -627,7 +630,7 @@ def render_preprocessing_pipeline(
                 key="global_imputation_select",
             )
             try:
-                processed_df = impute_missing_values(raw_df, strategy=global_opt.lower().replace(" ", "_"))
+                processed_df = impute_missing_values(raw_df, strategy=global_opt.lower().replace(" ", "_"), seed=42)
                 st.info(f"Applied **{global_opt}** imputation globally across missing features.")
             except Exception as e:
                 imputation_failed = True
@@ -653,7 +656,7 @@ def render_preprocessing_pipeline(
                     col_strategy_map[col_name] = selected_strategy.lower().replace(" ", "_")
 
             try:
-                processed_df = impute_missing_values(raw_df, strategy=col_strategy_map)
+                processed_df = impute_missing_values(raw_df, strategy=col_strategy_map, seed=42)
                 st.info("Applied per-column imputation configuration.")
             except Exception as e:
                 imputation_failed = True
