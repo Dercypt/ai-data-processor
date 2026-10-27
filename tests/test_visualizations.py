@@ -668,6 +668,25 @@ class TestVisualizations(unittest.TestCase):
             mock_init.assert_not_called()
             mock_entries.assert_not_called()
 
+    def test_main_entrypoint_executes_safely_and_propagates_secrets(self):
+        """main entrypoint should execute safely and propagate SQLITE_DB_PATH from secrets to environment."""
+        from unittest.mock import patch
+        import main
+
+        mock_st.secrets = {"SQLITE_DB_PATH": "secrets_configured.db"}
+        old_env = os.environ.pop("SQLITE_DB_PATH", None)
+        try:
+            with patch("main.initialize_database") as mock_init_db, patch("main.get_all_entries", return_value=[]):
+                main.main()
+                mock_init_db.assert_called_once()
+                self.assertEqual(os.environ.get("SQLITE_DB_PATH"), "secrets_configured.db")
+        finally:
+            if old_env is not None:
+                os.environ["SQLITE_DB_PATH"] = old_env
+            else:
+                os.environ.pop("SQLITE_DB_PATH", None)
+            mock_st.secrets = {}
+
 
 if __name__ == "__main__":
     unittest.main()
