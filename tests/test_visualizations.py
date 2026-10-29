@@ -611,6 +611,24 @@ class TestVisualizations(unittest.TestCase):
         self.assertIsNone(st.session_state["imputation_drift_results"])
         self.assertIsNone(st.session_state["benchmark_results"])
 
+    def test_clear_analysis_session_state_increments_uploader_key_and_resets_file_id(self):
+        """clear_analysis_session_state must increment uploader_key and reset current_file_id to None."""
+        import streamlit as st
+        import main
+
+        st.session_state["uploader_key"] = 0
+        st.session_state["current_file_id"] = "test_upload_file_123"
+
+        main.clear_analysis_session_state()
+
+        self.assertEqual(st.session_state["uploader_key"], 1)
+        self.assertIsNone(st.session_state["current_file_id"])
+
+        # Subsequent invocation must monotonically increment uploader_key
+        main.clear_analysis_session_state()
+        self.assertEqual(st.session_state["uploader_key"], 2)
+        self.assertIsNone(st.session_state["current_file_id"])
+
     def test_render_preprocessing_pipeline_normalizes_infinite_without_nans(self):
         """render_preprocessing_pipeline must normalize +/-inf to NaN and not short-circuit when no NaNs exist."""
         raw_df = pd.DataFrame({
