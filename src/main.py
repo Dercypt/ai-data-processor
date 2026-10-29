@@ -79,7 +79,10 @@ def clear_analysis_session_state() -> None:
 
     Ensures that generated insights, dataset summaries, imputation drift,
     active file tracking, and file uploader widgets do not leak across
-    authentication boundaries or account switches.
+    authentication boundaries or account switches. Dynamic key rotation
+    (incrementing `uploader_key`) invalidates the Streamlit widget cache,
+    ensuring uploaded CSV bytes and rendered previews from a previous user
+    session cannot persist after logout or account transition.
     """
     st.session_state["generated_insight"] = None
     st.session_state["dataset_summary"] = None
