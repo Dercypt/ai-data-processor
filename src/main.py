@@ -78,12 +78,19 @@ def clear_analysis_session_state() -> None:
     """Clear private analysis artifacts and benchmark results from session state.
 
     Ensures that generated insights, dataset summaries, imputation drift,
-    and memory benchmarks do not leak across authentication boundaries.
+    active file tracking, and file uploader widgets do not leak across
+    authentication boundaries or account switches. Dynamic key rotation
+    (incrementing `uploader_key`) invalidates the Streamlit widget cache,
+    ensuring uploaded CSV bytes and rendered previews from a previous user
+    session cannot persist after logout or account transition.
     """
     st.session_state["generated_insight"] = None
     st.session_state["dataset_summary"] = None
     st.session_state["imputation_drift_results"] = None
     st.session_state["benchmark_results"] = None
+    st.session_state["current_file_id"] = None
+    st.session_state.setdefault("uploader_key", 0)
+    st.session_state["uploader_key"] += 1
 
 
 def get_current_user_id() -> Optional[int]:
@@ -165,6 +172,7 @@ def main() -> None:
         st.session_state["imputation_drift_results"] = None
     if "benchmark_results" not in st.session_state:
         st.session_state["benchmark_results"] = None
+    st.session_state.setdefault("uploader_key", 0)
 
     # --- SIDEBAR: AUTHENTICATION & WORKSPACE ---
     st.sidebar.title("Analyst Workspace")
@@ -246,7 +254,8 @@ def main() -> None:
     # --- MAIN APP: UPLOAD & ANALYZE ---
     st.write("### 📂 Tabular Dataset Ingestion")
 
-    file = st.file_uploader("Upload CSV", type="csv")
+    uploader_key = f"csv_uploader_{st.session_state['uploader_key']}"
+    file = st.file_uploader("Upload CSV", type="csv", key=uploader_key)
 
     if file:
         file_id = getattr(file, "file_id", getattr(file, "name", "default_file"))
