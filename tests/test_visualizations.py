@@ -629,6 +629,46 @@ class TestVisualizations(unittest.TestCase):
         self.assertEqual(st.session_state["uploader_key"], 2)
         self.assertIsNone(st.session_state["current_file_id"])
 
+    def test_clear_analysis_session_state_without_prior_uploader_key(self):
+        """clear_analysis_session_state gracefully initializes and increments uploader_key when absent."""
+        import streamlit as st
+        import main
+
+        st.session_state.clear()
+        self.assertNotIn("uploader_key", st.session_state)
+        main.clear_analysis_session_state()
+        self.assertEqual(st.session_state["uploader_key"], 1)
+        self.assertIsNone(st.session_state["current_file_id"])
+
+    def test_main_dynamic_uploader_key_isolation_on_session_clear(self):
+        """main must pass dynamic widget key to file_uploader and cycle keys upon session clear."""
+        from unittest.mock import patch
+        import streamlit as st
+        import main
+
+        st.session_state.clear()
+        mock_st.file_uploader.return_value = None
+
+        with patch("main.initialize_database"), patch("main.get_all_entries", return_value=[]):
+            # 1. Initial main run: uploader_key defaults to 0 and widget key is csv_uploader_0
+            main.main()
+            self.assertEqual(st.session_state.get("uploader_key"), 0)
+            mock_st.file_uploader.assert_called_with("Upload CSV", type="csv", key="csv_uploader_0")
+
+            # 2. Simulate user login / logout which calls clear_analysis_session_state
+            main.clear_analysis_session_state()
+            self.assertEqual(st.session_state.get("uploader_key"), 1)
+
+            # 3. Subsequent main run passes csv_uploader_1
+            main.main()
+            mock_st.file_uploader.assert_called_with("Upload CSV", type="csv", key="csv_uploader_1")
+
+            # 4. Another logout / clear increments to csv_uploader_2
+            main.clear_analysis_session_state()
+            self.assertEqual(st.session_state.get("uploader_key"), 2)
+            main.main()
+            mock_st.file_uploader.assert_called_with("Upload CSV", type="csv", key="csv_uploader_2")
+
     def test_render_preprocessing_pipeline_normalizes_infinite_without_nans(self):
         """render_preprocessing_pipeline must normalize +/-inf to NaN and not short-circuit when no NaNs exist."""
         raw_df = pd.DataFrame({
